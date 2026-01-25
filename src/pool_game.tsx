@@ -827,97 +827,7 @@ class PoolGameEngine {
       const pixelX = pos.x * SCALE;
       const pixelY = pos.z * SCALE; // Z becomes Y in 2D view
 
-      // Extract rotation angle from quaternion for 2D display
-      // We'll use the rotation around the Y axis for visual spin effect
-      const angle = this.quaternionToYRotation(rot);
-
-      ctx.save();
-      ctx.translate(pixelX, pixelY);
-      ctx.rotate(angle);
-
-      if (ball.type === 'cue') {
-        // White ball with rotation marker
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'hsl(25, 15%, 80%)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Rotation indicator - small dot
-        ctx.fillStyle = 'hsl(220, 70%, 50%)';
-        ctx.beginPath();
-        ctx.arc(radius * 0.6, 0, 2, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (ball.type === 'eight') {
-        // Eight ball
-        ctx.fillStyle = 'black';
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        // White circle in center
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.arc(0, 0, radius * 0.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Number 8
-        ctx.fillStyle = 'black';
-        ctx.font = 'bold 10px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('8', 0, 0);
-
-        // Rotation indicator
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.beginPath();
-        ctx.arc(radius * 0.7, 0, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        // Solids and stripes
-        const colors = [
-          '#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025',
-          '#056839', '#862234', '#333333'
-        ];
-        const colorIndex = (ball.number - 1) % 8;
-
-        // Base color
-        ctx.fillStyle = ball.type === 'solid' ? colors[colorIndex] : 'white';
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (ball.type === 'stripe') {
-          // Horizontal stripe
-          ctx.fillStyle = colors[colorIndex];
-          ctx.fillRect(-radius, -3, radius * 2, 6);
-        }
-
-        // White circle for number background
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.arc(0, 0, radius * 0.45, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Number
-        ctx.fillStyle = 'black';
-        ctx.font = 'bold 9px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(ball.number), 0, 0);
-
-        // Rotation indicator - small colored dot offset from center
-        ctx.fillStyle = colors[colorIndex];
-        ctx.globalAlpha = 0.6;
-        ctx.beginPath();
-        ctx.arc(radius * 0.7, 0, 2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-      }
-
-      ctx.restore();
+      this.renderBall3D(ctx, pixelX, pixelY, radius, ball.type, ball.number, rot);
     });
 
     // Cue stick
@@ -1003,12 +913,208 @@ class PoolGameEngine {
     ctx.fillText(turnText, w / 2, 30);
   }
 
-  // Helper to extract Y-axis rotation from quaternion for 2D display
-  quaternionToYRotation(q: { w: number, x: number, y: number, z: number }): number {
-    // Convert quaternion to Euler angles, extract Y rotation
-    const sinr_cosp = 2 * (q.w * q.y + q.z * q.x);
-    const cosr_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
-    return Math.atan2(sinr_cosp, cosr_cosp);
+  // Rotate a 3D point by a quaternion
+  rotatePointByQuaternion(
+    point: { x: number, y: number, z: number },
+    q: { w: number, x: number, y: number, z: number }
+  ): { x: number, y: number, z: number } {
+    // Quaternion rotation: q * p * q^(-1)
+    // Use conjugate (negate x,y,z) to correct rotation direction
+    const px = point.x, py = point.y, pz = point.z;
+    const qw = q.w, qx = -q.x, qy = -q.y, qz = -q.z;
+
+    // Calculate q * p (treating p as quaternion with w=0)
+    const tx = 2 * (qy * pz - qz * py);
+    const ty = 2 * (qz * px - qx * pz);
+    const tz = 2 * (qx * py - qy * px);
+
+    return {
+      x: px + qw * tx + (qy * tz - qz * ty),
+      y: py + qw * ty + (qz * tx - qx * tz),
+      z: pz + qw * tz + (qx * ty - qy * tx)
+    };
+  }
+
+  // Render a ball with proper 3D rotation projected to 2D
+  renderBall3D(
+    ctx: CanvasRenderingContext2D,
+    pixelX: number,
+    pixelY: number,
+    radius: number,
+    ballType: string,
+    ballNumber: number,
+    quaternion: { w: number, x: number, y: number, z: number }
+  ) {
+    const colors = [
+      '#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025',
+      '#056839', '#862234', '#333333'
+    ];
+
+    ctx.save();
+    ctx.translate(pixelX, pixelY);
+
+    if (ballType === 'cue') {
+      // White cue ball with 3D rotation indicator
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'hsl(25, 15%, 80%)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 3D rotation indicator - blue dot on sphere surface
+      const dotPos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
+      // Project to 2D (viewing from above, Y is up toward camera)
+      // Only show if dot is on visible hemisphere (y > 0 means facing up/camera)
+      if (dotPos3D.y > 0) {
+        // Project x,z to screen, scale by how much it's on the visible side
+        const projX = dotPos3D.x * radius * 0.7;
+        const projY = dotPos3D.z * radius * 0.7;
+        const dotSize = 2 + dotPos3D.y * 1.5; // Larger when more directly facing camera
+        ctx.fillStyle = `rgba(30, 100, 200, ${0.4 + dotPos3D.y * 0.6})`;
+        ctx.beginPath();
+        ctx.arc(projX, projY, dotSize, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (ballType === 'eight') {
+      // Eight ball - black with white circle and number
+      ctx.fillStyle = 'black';
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // The number circle is on the ball surface - render it in 3D
+      // Place the number circle at a specific point that rotates with the ball
+      const circlePos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
+
+      if (circlePos3D.y > -0.2) { // Show when somewhat visible
+        const projX = circlePos3D.x * radius * 0.6;
+        const projY = circlePos3D.z * radius * 0.6;
+        const circleScale = Math.max(0, circlePos3D.y * 0.5 + 0.5);
+        const circleRadius = radius * 0.5 * circleScale;
+
+        if (circleRadius > 2) {
+          // White circle
+          ctx.fillStyle = 'white';
+          ctx.beginPath();
+          ctx.arc(projX, projY, circleRadius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Number 8
+          if (circleScale > 0.4) {
+            ctx.fillStyle = 'black';
+            ctx.font = `bold ${Math.round(10 * circleScale)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('8', projX, projY);
+          }
+        }
+      }
+    } else {
+      // Solid or stripe ball
+      const colorIndex = (ballNumber - 1) % 8;
+      const ballColor = colors[colorIndex];
+
+      if (ballType === 'solid') {
+        // Solid ball - entirely colored
+        ctx.fillStyle = ballColor;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Stripe ball - white base with colored stripe band
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw the stripe as a 3D band around the ball's equator
+        // The stripe is a band in the XZ plane (Y near 0) in ball-local space
+        this.renderStripe3D(ctx, radius, ballColor, quaternion);
+      }
+
+      // Number circle (on ball surface, rotates with ball)
+      const circlePos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
+
+      if (circlePos3D.y > -0.2) {
+        const projX = circlePos3D.x * radius * 0.55;
+        const projY = circlePos3D.z * radius * 0.55;
+        const circleScale = Math.max(0, circlePos3D.y * 0.5 + 0.5);
+        const circleRadius = radius * 0.45 * circleScale;
+
+        if (circleRadius > 2) {
+          ctx.fillStyle = 'white';
+          ctx.beginPath();
+          ctx.arc(projX, projY, circleRadius, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (circleScale > 0.35) {
+            ctx.fillStyle = 'black';
+            ctx.font = `bold ${Math.round(9 * circleScale)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(ballNumber), projX, projY);
+          }
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+  // Render the stripe band on a stripe ball with 3D rotation
+  renderStripe3D(
+    ctx: CanvasRenderingContext2D,
+    radius: number,
+    color: string,
+    quaternion: { w: number, x: number, y: number, z: number }
+  ) {
+    // The stripe is a band around the equator of the ball
+    // We'll render it by drawing multiple small segments
+    ctx.fillStyle = color;
+
+    const stripeHalfWidth = 0.35; // How wide the stripe is (in terms of Y from -0.35 to 0.35)
+    const segments = 32;
+
+    for (let i = 0; i < segments; i++) {
+      const angle1 = (i / segments) * Math.PI * 2;
+      const angle2 = ((i + 1) / segments) * Math.PI * 2;
+
+      // Points on the stripe edges (top and bottom of stripe band)
+      const points3D = [
+        { x: Math.cos(angle1), y: stripeHalfWidth, z: Math.sin(angle1) },
+        { x: Math.cos(angle2), y: stripeHalfWidth, z: Math.sin(angle2) },
+        { x: Math.cos(angle2), y: -stripeHalfWidth, z: Math.sin(angle2) },
+        { x: Math.cos(angle1), y: -stripeHalfWidth, z: Math.sin(angle1) }
+      ];
+
+      // Normalize and rotate each point
+      const rotatedPoints = points3D.map(p => {
+        const len = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+        const normalized = { x: p.x / len, y: p.y / len, z: p.z / len };
+        return this.rotatePointByQuaternion(normalized, quaternion);
+      });
+
+      // Check if this segment is visible (average Y > some threshold)
+      const avgY = (rotatedPoints[0].y + rotatedPoints[1].y + rotatedPoints[2].y + rotatedPoints[3].y) / 4;
+      if (avgY < -0.1) continue; // Skip back-facing segments
+
+      // Project to 2D
+      const projected = rotatedPoints.map(p => ({
+        x: p.x * radius * 0.95,
+        y: p.z * radius * 0.95
+      }));
+
+      // Draw the quad
+      ctx.beginPath();
+      ctx.moveTo(projected[0].x, projected[0].y);
+      ctx.lineTo(projected[1].x, projected[1].y);
+      ctx.lineTo(projected[2].x, projected[2].y);
+      ctx.lineTo(projected[3].x, projected[3].y);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   destroy() {
