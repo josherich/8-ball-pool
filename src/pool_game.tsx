@@ -809,17 +809,67 @@ class PoolGameEngine {
     ctx.lineWidth = 2;
     ctx.strokeRect(60, 60, w - 120, h - 120);
 
-    // Pockets
-    this.pockets.forEach(pocket => {
-      ctx.fillStyle = 'hsl(25, 15%, 10%)';
+    // Pockets with proper openings
+    this.pockets.forEach((pocket, index) => {
+      // Outer pocket rim (dark wood)
+      ctx.fillStyle = 'hsl(25, 35%, 15%)';
+      ctx.beginPath();
+      ctx.arc(pocket.x, pocket.y, pocket.radius + 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Pocket opening shadow ring
+      ctx.fillStyle = 'hsl(25, 15%, 8%)';
+      ctx.beginPath();
+      ctx.arc(pocket.x, pocket.y, pocket.radius + 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Main pocket hole (deep black)
+      const gradient = ctx.createRadialGradient(
+        pocket.x, pocket.y, 0,
+        pocket.x, pocket.y, pocket.radius
+      );
+      gradient.addColorStop(0, 'hsl(0, 0%, 2%)');
+      gradient.addColorStop(0.7, 'hsl(0, 0%, 5%)');
+      gradient.addColorStop(1, 'hsl(0, 0%, 10%)');
+      ctx.fillStyle = gradient;
       ctx.beginPath();
       ctx.arc(pocket.x, pocket.y, pocket.radius, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = 'hsl(25, 15%, 5%)';
+      // Inner pocket depth effect
+      ctx.fillStyle = 'hsl(0, 0%, 0%)';
       ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius * 0.72, 0, Math.PI * 2);
+      ctx.arc(pocket.x, pocket.y, pocket.radius * 0.7, 0, Math.PI * 2);
       ctx.fill();
+
+      // Pocket opening highlights (leather/rubber edge)
+      ctx.strokeStyle = 'hsl(25, 25%, 20%)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      // Draw partial arc for 3D effect based on pocket position
+      // Corner pockets (0, 2, 3, 5) get diagonal openings
+      // Side pockets (1, 4) get horizontal openings
+      if (index === 0) { // Top-left corner
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.25, Math.PI * 1.25);
+      } else if (index === 2) { // Top-right corner
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * -0.25, Math.PI * 0.75);
+      } else if (index === 3) { // Bottom-left corner
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.75, Math.PI * 1.75);
+      } else if (index === 5) { // Bottom-right corner
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.25, Math.PI * 2.25);
+      } else if (index === 1) { // Top-middle
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.1, Math.PI * 0.9);
+      } else if (index === 4) { // Bottom-middle
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.1, Math.PI * 1.9);
+      }
+      ctx.stroke();
+
+      // Subtle inner highlight for depth
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(pocket.x - 2, pocket.y - 2, pocket.radius * 0.5, 0, Math.PI * 2);
+      ctx.stroke();
     });
 
     // Ball shadows (drawn first, below all balls)
