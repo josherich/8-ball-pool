@@ -288,6 +288,8 @@ class PoolGameEngine {
   connection: any;
   animationId: number | null;
   pockets: Array<{x: number, y: number, radius: number}>;
+  shotInProgress: boolean;
+  pocketedThisShot: {solids: number[], stripes: number[], cueBall: boolean};
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -313,6 +315,8 @@ class PoolGameEngine {
     this.connection = null;
     this.animationId = null;
     this.pockets = [];
+    this.shotInProgress = false;
+    this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
   }
 
   init() {
@@ -613,6 +617,10 @@ class PoolGameEngine {
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
+    // Start tracking this shot
+    this.shotInProgress = true;
+    this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
+
     // Apply impulse in the direction of the aim
     const impulseStrength = this.power * 8; // Adjust multiplier for feel
 
@@ -664,6 +672,15 @@ class PoolGameEngine {
         }
       }
 
+      // Fallback: If ball is outside table bounds, consider it pocketed
+      // This catches fast-moving balls that might skip past pocket detection
+      const w = this.canvas.width;
+      const cushionInset = 40;
+      if (pixelX < cushionInset - pixelRadius || pixelX > w - cushionInset + pixelRadius ||
+          pixelZ < cushionInset - pixelRadius || pixelZ > h - cushionInset + pixelRadius) {
+        isInPocket = true;
+      }
+
       if (isInPocket) {
         // Remove ball from physics world
         this.world.removeRigidBody(ball.body);
@@ -695,13 +712,19 @@ class PoolGameEngine {
           // Update the ball reference
           this.balls[i] = { body: newBody, collider: newCollider, type: 'cue', number: 0 };
 
-          this.switchTurn();
+          // Track that cue ball was scratched this shot
+          this.pocketedThisShot.cueBall = true;
         } else if (ball.type === 'eight') {
           this.pocketed.eight = true;
           this.balls.splice(i, 1);
         } else {
-          if (ball.type === 'solid') this.pocketed.solids.push(ball.number);
-          else this.pocketed.stripes.push(ball.number);
+          if (ball.type === 'solid') {
+            this.pocketed.solids.push(ball.number);
+            this.pocketedThisShot.solids.push(ball.number);
+          } else {
+            this.pocketed.stripes.push(ball.number);
+            this.pocketedThisShot.stripes.push(ball.number);
+          }
           this.balls.splice(i, 1);
         }
       }
@@ -855,12 +878,78 @@ class PoolGameEngine {
 
     this.checkPockets();
 
+    // Check if shot has ended (all balls stopped)
+    if (this.shotInProgress && this.allBallsStopped()) {
+      this.evaluateTurnSwitch();
+      this.shotInProgress = false;
+    }
+
     if (this.aiming && this.powerIncreasing) {
       this.power = Math.min(this.power + 0.02, MAX_SHOT_POWER);
     }
 
     this.render();
     this.animationId = requestAnimationFrame(() => this.gameLoop());
+  }
+
+  allBallsStopped(): boolean {
+    return this.balls.every(ball => {
+      const linvel = ball.body.linvel();
+      const angvel = ball.body.angvel();
+      const linearSpeed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
+      const angularSpeed = Math.sqrt(angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
+      return linearSpeed < 0.05 && angularSpeed < 0.1;
+    });
+  }
+
+  evaluateTurnSwitch() {
+    // If cue ball was scratched, always switch turn
+    if (this.pocketedThisShot.cueBall) {
+      this.switchTurn();
+      return;
+    }
+
+    // Determine current player's ball type
+    const currentPlayerType = this.currentPlayer === 1
+      ? this.playerTypes.player1
+      : this.playerTypes.player2;
+
+    // If types haven't been assigned yet
+    if (!currentPlayerType) {
+      // If player pocketed any ball, they get that type and keep their turn
+      if (this.pocketedThisShot.solids.length > 0) {
+        if (this.currentPlayer === 1) {
+          this.playerTypes.player1 = 'solid';
+          this.playerTypes.player2 = 'stripe';
+        } else {
+          this.playerTypes.player2 = 'solid';
+          this.playerTypes.player1 = 'stripe';
+        }
+        return; // Keep turn
+      } else if (this.pocketedThisShot.stripes.length > 0) {
+        if (this.currentPlayer === 1) {
+          this.playerTypes.player1 = 'stripe';
+          this.playerTypes.player2 = 'solid';
+        } else {
+          this.playerTypes.player2 = 'stripe';
+          this.playerTypes.player1 = 'solid';
+        }
+        return; // Keep turn
+      }
+      // Didn't pocket anything, switch turn
+      this.switchTurn();
+      return;
+    }
+
+    // Check if player pocketed their assigned ball type
+    const pocketedOwn = currentPlayerType === 'solid'
+      ? this.pocketedThisShot.solids.length > 0
+      : this.pocketedThisShot.stripes.length > 0;
+
+    if (!pocketedOwn) {
+      this.switchTurn();
+    }
+    // If they pocketed their own ball type, they keep their turn
   }
 
   render() {
@@ -1099,13 +1188,8 @@ class PoolGameEngine {
       ctx.strokeRect(meterX - meterWidth/2, meterY, meterWidth, meterHeight);
     }
 
-    // Score display
-    ctx.fillStyle = 'hsl(45, 80%, 65%)';
-    ctx.font = 'bold 24px Arial';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Player 1: ${this.pocketed.solids.length}`, 60, 30);
-    ctx.textAlign = 'right';
-    ctx.fillText(`Player 2: ${this.pocketed.stripes.length}`, w - 60, 30);
+    // Ball display and turn indicator
+    this.renderBallDisplay(ctx, w, h);
 
     // Current turn indicator
     const turnText = this.mode === 'online'
@@ -1115,7 +1199,134 @@ class PoolGameEngine {
     ctx.fillStyle = this.canShoot() ? 'hsl(145, 50%, 50%)' : 'hsl(25, 50%, 50%)';
     ctx.font = 'bold 20px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText(turnText, w / 2, 30);
+    ctx.fillText(turnText, w / 2 - 120, 30);
+  }
+
+  // Render the ball display showing solids on left, 8-ball in center, stripes on right
+  renderBallDisplay(ctx: CanvasRenderingContext2D, canvasWidth: number, _canvasHeight: number) {
+    const displayY = 20; // Y position for ball display
+    const ballRadius = 10; // Smaller balls for display
+    const ballSpacing = 24; // Space between ball centers
+
+    // Colors for balls 1-7 (solids) and 9-15 (stripes use same colors)
+    const colors = [
+      '#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025',
+      '#056839', '#862234', '#333333'
+    ];
+
+    // Render solids (1-7) on top left
+    const solidsStartX = 90;
+    for (let i = 1; i <= 7; i++) {
+      const x = solidsStartX + (i - 1) * ballSpacing;
+      const isPocketed = this.pocketed.solids.includes(i);
+      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'solid', i, colors[(i - 1) % 8], isPocketed);
+    }
+
+    // Render 8-ball in the middle
+    const eightBallX = canvasWidth / 2 + 50;
+    this.renderDisplayBall(ctx, eightBallX, displayY, ballRadius, 'eight', 8, '#333333', this.pocketed.eight);
+
+    // Render stripes (9-15) on top right
+    const stripesEndX = canvasWidth - 90;
+    for (let i = 9; i <= 15; i++) {
+      const x = stripesEndX - (15 - i) * ballSpacing;
+      const isPocketed = this.pocketed.stripes.includes(i);
+      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'stripe', i, colors[(i - 9) % 8], isPocketed);
+    }
+  }
+
+  // Render a single ball in the display (simplified 2D version)
+  renderDisplayBall(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    radius: number,
+    ballType: string,
+    ballNumber: number,
+    color: string,
+    isPocketed: boolean
+  ) {
+    ctx.save();
+
+    // Apply gray filter for pocketed balls
+    if (isPocketed) {
+      ctx.globalAlpha = 0.35;
+    }
+
+    if (ballType === 'eight') {
+      // Eight ball - black with white circle and number
+      ctx.fillStyle = isPocketed ? '#555555' : 'black';
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // White circle with number
+      ctx.fillStyle = isPocketed ? '#999999' : 'white';
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = isPocketed ? '#555555' : 'black';
+      ctx.font = `bold ${Math.round(radius * 0.8)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('8', x, y);
+    } else if (ballType === 'solid') {
+      // Solid ball
+      ctx.fillStyle = isPocketed ? '#666666' : color;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // White circle with number
+      ctx.fillStyle = isPocketed ? '#999999' : 'white';
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = isPocketed ? '#555555' : 'black';
+      ctx.font = `bold ${Math.round(radius * 0.7)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(ballNumber), x, y);
+    } else if (ballType === 'stripe') {
+      // Stripe ball - white with colored stripe
+      ctx.fillStyle = isPocketed ? '#888888' : 'white';
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw stripe as a band across the middle
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.clip();
+
+      ctx.fillStyle = isPocketed ? '#666666' : color;
+      ctx.fillRect(x - radius, y - radius * 0.4, radius * 2, radius * 0.8);
+      ctx.restore();
+
+      // White circle with number
+      ctx.fillStyle = isPocketed ? '#999999' : 'white';
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = isPocketed ? '#555555' : 'black';
+      ctx.font = `bold ${Math.round(radius * 0.7)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(ballNumber), x, y);
+    }
+
+    // Add subtle border
+    ctx.strokeStyle = isPocketed ? 'rgba(100, 100, 100, 0.5)' : 'rgba(0, 0, 0, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   // Rotate a 3D point by a quaternion
