@@ -394,7 +394,8 @@ class PoolGameEngine {
 
     // Top cushions (along Z = physCushionInset, extending in X direction)
     // Left segment of top cushion (from left corner pocket to center pocket)
-    const topZ = physCushionInset;
+    // Offset by ball radius so the edge of the ball collides with the visual cushion edge
+    const topZ = physCushionInset + physBallRadius;
     const topLeftStart = physCushionInset + physCornerGap;
     const topLeftEnd = physW / 2 - physSideGap;
     const topLeftLength = topLeftEnd - topLeftStart;
@@ -425,7 +426,8 @@ class PoolGameEngine {
     }
 
     // Bottom cushions (along Z = physH - physCushionInset)
-    const bottomZ = physH - physCushionInset;
+    // Offset by ball radius so the edge of the ball collides with the visual cushion edge
+    const bottomZ = physH - physCushionInset - physBallRadius;
     const bottomLeftStart = physCushionInset + physCornerGap;
     const bottomLeftEnd = physW / 2 - physSideGap;
     const bottomLeftLength = bottomLeftEnd - bottomLeftStart;
@@ -455,7 +457,8 @@ class PoolGameEngine {
     }
 
     // Left cushion (along X = physCushionInset, extending in Z direction)
-    const leftX = physCushionInset;
+    // Offset by ball radius so the edge of the ball collides with the visual cushion edge
+    const leftX = physCushionInset + physBallRadius;
     const leftStart = physCushionInset + physCornerGap;
     const leftEnd = physH - physCushionInset - physCornerGap;
     const leftLength = leftEnd - leftStart;
@@ -471,7 +474,8 @@ class PoolGameEngine {
     }
 
     // Right cushion
-    const rightX = physW - physCushionInset;
+    // Offset by ball radius so the edge of the ball collides with the visual cushion edge
+    const rightX = physW - physCushionInset - physBallRadius;
     const rightStart = physCushionInset + physCornerGap;
     const rightEnd = physH - physCushionInset - physCornerGap;
     const rightLength = rightEnd - rightStart;
