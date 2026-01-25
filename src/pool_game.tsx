@@ -1,39 +1,39 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Camera, Users, Copy, Check } from 'lucide-react';
+import RAPIER from '@dimforge/rapier3d-compat';
 
 const PoolGame = () => {
-  const canvasRef = useRef(null);
-  const [gameMode, setGameMode] = useState(null); // 'local' or 'online'
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [gameMode, setGameMode] = useState<string | null>(null); // 'local' or 'online'
   const [connectionState, setConnectionState] = useState('idle'); // idle, hosting, joining, connected
   const [roomCode, setRoomCode] = useState('');
   const [inputCode, setInputCode] = useState('');
   const [copied, setCopied] = useState(false);
-  const gameRef = useRef(null);
+  const [rapierLoaded, setRapierLoaded] = useState(false);
+  const gameRef = useRef<PoolGameEngine | null>(null);
+
+  // Initialize Rapier WASM
+  useEffect(() => {
+    RAPIER.init().then(() => {
+      setRapierLoaded(true);
+    });
+  }, []);
 
   useEffect(() => {
-    if (!canvasRef.current || !gameMode) return;
+    if (!canvasRef.current || !gameMode || !rapierLoaded) return;
 
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js';
-    script.async = true;
-
-    script.onload = () => {
-      gameRef.current = new PoolGameEngine(canvasRef.current, gameMode, {
-        onConnectionStateChange: setConnectionState,
-        onRoomCodeGenerated: setRoomCode
-      });
-      gameRef.current.init();
-    };
-
-    document.body.appendChild(script);
+    gameRef.current = new PoolGameEngine(canvasRef.current, gameMode, RAPIER, {
+      onConnectionStateChange: setConnectionState,
+      onRoomCodeGenerated: setRoomCode
+    });
+    gameRef.current.init();
 
     return () => {
       if (gameRef.current) {
         gameRef.current.destroy();
       }
-      document.body.removeChild(script);
     };
-  }, [gameMode]);
+  }, [gameMode, rapierLoaded]);
 
   const handleHost = () => {
     setGameMode('online');
@@ -250,16 +250,53 @@ const PoolGame = () => {
   );
 };
 
+// Physics properties for realistic pool ball behavior
+const BALL_MASS = 0.17;        // kg (standard pool ball is ~170g)
+const BALL_RESTITUTION = 0.92; // Bounciness of ball-to-ball collisions
+const BALL_FRICTION = 0.2;     // Surface friction between balls
+const CUSHION_RESTITUTION = 0.75; // Cushion bounce factor
+const CUSHION_FRICTION = 0.15;    // Cushion surface friction
+const ROLLING_FRICTION = 0.01;    // Felt resistance (simulated)
+const LINEAR_DAMPING = 0.3;       // Simulates rolling resistance on felt
+const ANGULAR_DAMPING = 0.5;      // Simulates rotational friction on felt
+
+// Canvas to physics scale (pixels per physics unit)
+const SCALE = 5;
+
 class PoolGameEngine {
-  constructor(canvas, mode, callbacks) {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  mode: string;
+  RAPIER: typeof RAPIER;
+  callbacks: any;
+  world: RAPIER.World | null;
+  balls: Array<{body: RAPIER.RigidBody, collider: RAPIER.Collider, type: string, number: number}>;
+  cushionBodies: RAPIER.RigidBody[];
+  currentPlayer: number;
+  aiming: boolean;
+  aimAngle: number;
+  power: number;
+  powerIncreasing: boolean;
+  scores: {player1: number, player2: number};
+  gameStarted: boolean;
+  pocketed: {solids: number[], stripes: number[], eight: boolean};
+  playerTypes: {player1: string | null, player2: string | null};
+  mousePos: {x: number, y: number};
+  isMyTurn: boolean;
+  peer: any;
+  connection: any;
+  animationId: number | null;
+  pockets: Array<{x: number, y: number, radius: number}>;
+
+  constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+    this.ctx = canvas.getContext('2d')!;
     this.mode = mode;
+    this.RAPIER = rapier;
     this.callbacks = callbacks;
-    this.engine = null;
     this.world = null;
     this.balls = [];
-    this.cue = null;
+    this.cushionBodies = [];
     this.currentPlayer = 1;
     this.aiming = false;
     this.aimAngle = 0;
@@ -268,20 +305,18 @@ class PoolGameEngine {
     this.scores = { player1: 0, player2: 0 };
     this.gameStarted = false;
     this.pocketed = { solids: [], stripes: [], eight: false };
-    this.playerTypes = { player1: null, player2: null }; // 'solids' or 'stripes'
+    this.playerTypes = { player1: null, player2: null };
     this.mousePos = { x: 0, y: 0 };
     this.isMyTurn = true;
     this.peer = null;
     this.connection = null;
+    this.animationId = null;
+    this.pockets = [];
   }
 
   init() {
-    const { Engine, World, Bodies, Events } = Matter;
-
-    this.engine = Engine.create({
-      gravity: { x: 0, y: 0 }
-    });
-    this.world = this.engine.world;
+    // Create physics world with no gravity (pool table is horizontal)
+    this.world = new this.RAPIER.World({ x: 0.0, y: 0.0, z: 0.0 });
 
     this.setupTable();
     this.setupBalls();
@@ -295,173 +330,226 @@ class PoolGameEngine {
   }
 
   setupWebRTC() {
-    // Simple peer-to-peer using room code
     const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     this.callbacks.onRoomCodeGenerated(roomCode);
-
-    // Store game state for sync
-    this.lastSyncTime = Date.now();
   }
 
-  joinRoom(code) {
+  joinRoom(_code: string) {
     this.isMyTurn = false;
     this.callbacks.onConnectionStateChange('connected');
   }
 
   setupTable() {
-    const { Bodies } = Matter;
+    if (!this.world) return;
+
     const w = this.canvas.width;
     const h = this.canvas.height;
-    const cushionInset = 40; // Distance from edge to visual cushion
-    const ballRadius = 12; // Ball radius
-    const wallThickness = 20; // Thickness of the cushion walls
-    const pocketRadius = 25;
-    const pocketGap = 50; // Gap in cushion for pockets
+    const cushionInset = 40; // Distance from edge to visual cushion (pixels)
+    const ballRadius = 12;   // Ball radius in pixels
+    const cushionThickness = 15; // Cushion thickness in pixels
+    const pocketRadius = 25; // Corner pocket radius in pixels
+    const sidePocketRadius = 22; // Side pocket radius in pixels
+    const cornerPocketGap = 45; // Gap in cushion for corner pockets (pixels)
+    const sidePocketGap = 40;   // Gap for side pockets (pixels)
 
-    // Walls positioned so ball edge is flush with visual cushion
-    // Visual cushion is at 40px from edge, ball center should be at 40 + ballRadius when touching
-    const playableInset = cushionInset + ballRadius;
-
-    // Pocket positions
+    // Pocket positions (in pixels for rendering)
     this.pockets = [
-      { x: 50, y: 50 },
-      { x: w/2, y: 50 },
-      { x: w - 50, y: 50 },
-      { x: 50, y: h - 50 },
-      { x: w/2, y: h - 50 },
-      { x: w - 50, y: h - 50 }
+      { x: cushionInset, y: cushionInset, radius: pocketRadius },                    // Top-left
+      { x: w / 2, y: cushionInset - 5, radius: sidePocketRadius },                   // Top-middle
+      { x: w - cushionInset, y: cushionInset, radius: pocketRadius },                // Top-right
+      { x: cushionInset, y: h - cushionInset, radius: pocketRadius },                // Bottom-left
+      { x: w / 2, y: h - cushionInset + 5, radius: sidePocketRadius },               // Bottom-middle
+      { x: w - cushionInset, y: h - cushionInset, radius: pocketRadius }             // Bottom-right
     ];
 
-    const walls = [];
+    // Create cushion walls using Rapier 3D
+    // In our 3D setup: X = left-right, Y = up (height), Z = top-bottom (depth into screen)
+    // We'll simulate a top-down view, so balls roll on the X-Z plane at Y=BALL_RADIUS
 
-    // Top wall - split into 2 segments with gap for middle pocket
-    const topY = playableInset;
-    walls.push(
-      // Left segment of top wall
-      Bodies.rectangle(
-        playableInset + (w/2 - playableInset - pocketGap) / 2,
-        topY,
-        w/2 - playableInset - pocketGap,
-        wallThickness,
-        { isStatic: true, restitution: 0.9, friction: 0.1 }
-      ),
-      // Right segment of top wall
-      Bodies.rectangle(
-        w/2 + pocketGap + (w/2 - playableInset - pocketGap) / 2,
-        topY,
-        w/2 - playableInset - pocketGap,
-        wallThickness,
-        { isStatic: true, restitution: 0.9, friction: 0.1 }
-      )
-    );
+    // Physics coordinates: Convert from pixels
+    // Left edge at x=0, right edge at x=w/SCALE
+    // Top edge at z=0, bottom edge at z=h/SCALE
+    const physW = w / SCALE;
+    const physH = h / SCALE;
+    const physCushionInset = cushionInset / SCALE;
+    const physCushionThickness = cushionThickness / SCALE;
+    const physCornerGap = cornerPocketGap / SCALE;
+    const physSideGap = sidePocketGap / SCALE;
+    const physBallRadius = ballRadius / SCALE;
+    const cushionHeight = physBallRadius * 2.5; // Cushions are taller than balls
 
-    // Bottom wall - split into 2 segments with gap for middle pocket
-    const bottomY = h - playableInset;
-    walls.push(
-      // Left segment of bottom wall
-      Bodies.rectangle(
-        playableInset + (w/2 - playableInset - pocketGap) / 2,
-        bottomY,
-        w/2 - playableInset - pocketGap,
-        wallThickness,
-        { isStatic: true, restitution: 0.9, friction: 0.1 }
-      ),
-      // Right segment of bottom wall
-      Bodies.rectangle(
-        w/2 + pocketGap + (w/2 - playableInset - pocketGap) / 2,
-        bottomY,
-        w/2 - playableInset - pocketGap,
-        wallThickness,
-        { isStatic: true, restitution: 0.9, friction: 0.1 }
-      )
-    );
+    // Helper to create a cushion cuboid
+    const createCushion = (x: number, y: number, z: number, hx: number, hy: number, hz: number) => {
+      const bodyDesc = this.RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
+      const body = this.world!.createRigidBody(bodyDesc);
+      const colliderDesc = this.RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+        .setRestitution(CUSHION_RESTITUTION)
+        .setFriction(CUSHION_FRICTION);
+      this.world!.createCollider(colliderDesc, body);
+      this.cushionBodies.push(body);
+    };
 
-    // Left wall - single segment in the middle (gaps at top and bottom corners)
-    const leftX = playableInset;
-    const leftWallStart = playableInset + pocketGap;
-    const leftWallEnd = h - playableInset - pocketGap;
-    const leftWallLength = leftWallEnd - leftWallStart;
-    walls.push(
-      // Middle segment of left wall (between top and bottom corner pockets)
-      Bodies.rectangle(
+    // Cushion Y position (bottom of cushion at table level)
+    const cushionY = cushionHeight / 2;
+
+    // Top cushions (along Z = physCushionInset, extending in X direction)
+    // Left segment of top cushion (from left corner pocket to center pocket)
+    const topZ = physCushionInset;
+    const topLeftStart = physCushionInset + physCornerGap;
+    const topLeftEnd = physW / 2 - physSideGap;
+    const topLeftLength = topLeftEnd - topLeftStart;
+    if (topLeftLength > 0) {
+      createCushion(
+        topLeftStart + topLeftLength / 2,
+        cushionY,
+        topZ,
+        topLeftLength / 2,
+        cushionHeight / 2,
+        physCushionThickness / 2
+      );
+    }
+
+    // Right segment of top cushion
+    const topRightStart = physW / 2 + physSideGap;
+    const topRightEnd = physW - physCushionInset - physCornerGap;
+    const topRightLength = topRightEnd - topRightStart;
+    if (topRightLength > 0) {
+      createCushion(
+        topRightStart + topRightLength / 2,
+        cushionY,
+        topZ,
+        topRightLength / 2,
+        cushionHeight / 2,
+        physCushionThickness / 2
+      );
+    }
+
+    // Bottom cushions (along Z = physH - physCushionInset)
+    const bottomZ = physH - physCushionInset;
+    const bottomLeftStart = physCushionInset + physCornerGap;
+    const bottomLeftEnd = physW / 2 - physSideGap;
+    const bottomLeftLength = bottomLeftEnd - bottomLeftStart;
+    if (bottomLeftLength > 0) {
+      createCushion(
+        bottomLeftStart + bottomLeftLength / 2,
+        cushionY,
+        bottomZ,
+        bottomLeftLength / 2,
+        cushionHeight / 2,
+        physCushionThickness / 2
+      );
+    }
+
+    const bottomRightStart = physW / 2 + physSideGap;
+    const bottomRightEnd = physW - physCushionInset - physCornerGap;
+    const bottomRightLength = bottomRightEnd - bottomRightStart;
+    if (bottomRightLength > 0) {
+      createCushion(
+        bottomRightStart + bottomRightLength / 2,
+        cushionY,
+        bottomZ,
+        bottomRightLength / 2,
+        cushionHeight / 2,
+        physCushionThickness / 2
+      );
+    }
+
+    // Left cushion (along X = physCushionInset, extending in Z direction)
+    const leftX = physCushionInset;
+    const leftStart = physCushionInset + physCornerGap;
+    const leftEnd = physH - physCushionInset - physCornerGap;
+    const leftLength = leftEnd - leftStart;
+    if (leftLength > 0) {
+      createCushion(
         leftX,
-        leftWallStart + leftWallLength / 2,
-        wallThickness,
-        leftWallLength,
-        { isStatic: true, restitution: 0.9, friction: 0.1 }
-      )
-    );
+        cushionY,
+        leftStart + leftLength / 2,
+        physCushionThickness / 2,
+        cushionHeight / 2,
+        leftLength / 2
+      );
+    }
 
-    // Right wall - single segment in the middle (gaps at top and bottom corners)
-    const rightX = w - playableInset;
-    const rightWallStart = playableInset + pocketGap;
-    const rightWallEnd = h - playableInset - pocketGap;
-    const rightWallLength = rightWallEnd - rightWallStart;
-    walls.push(
-      // Middle segment of right wall (between top and bottom corner pockets)
-      Bodies.rectangle(
+    // Right cushion
+    const rightX = physW - physCushionInset;
+    const rightStart = physCushionInset + physCornerGap;
+    const rightEnd = physH - physCushionInset - physCornerGap;
+    const rightLength = rightEnd - rightStart;
+    if (rightLength > 0) {
+      createCushion(
         rightX,
-        rightWallStart + rightWallLength / 2,
-        wallThickness,
-        rightWallLength,
-        { isStatic: true, restitution: 0.9, friction: 0.1 }
-      )
-    );
-
-    Matter.World.add(this.world, walls);
+        cushionY,
+        rightStart + rightLength / 2,
+        physCushionThickness / 2,
+        cushionHeight / 2,
+        rightLength / 2
+      );
+    }
   }
 
   setupBalls() {
-    const { Bodies } = Matter;
-    const radius = 12;
-    const startX = 900;
-    const startY = this.canvas.height / 2;
+    if (!this.world) return;
 
-    // Cue ball
-    const cueBall = Bodies.circle(300, startY, radius, {
-      restitution: 0.9,
-      friction: 0.01,
-      frictionAir: 0.02,
-      density: 0.001,
-      label: 'cue',
-      frictionStatic: 0.5
-    });
+    const pixelRadius = 12;
+    const physRadius = pixelRadius / SCALE;
+    const h = this.canvas.height;
 
-    this.balls.push({ body: cueBall, type: 'cue', number: 0 });
+    // Cue ball position in pixels, then convert to physics
+    const cuePixelX = 300;
+    const cuePixelY = h / 2;
+    const cuePhysX = cuePixelX / SCALE;
+    const cuePhysZ = cuePixelY / SCALE;
 
-    // Rack the balls in triangle
+    // Create a ball helper function
+    const createBall = (physX: number, physZ: number, type: string, number: number) => {
+      // Ball center at Y = physRadius (sitting on table surface at Y=0)
+      const bodyDesc = this.RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(physX, physRadius, physZ)
+        .setLinearDamping(LINEAR_DAMPING)
+        .setAngularDamping(ANGULAR_DAMPING)
+        .setCcdEnabled(true); // Enable CCD for fast-moving balls
+
+      const body = this.world!.createRigidBody(bodyDesc);
+
+      const colliderDesc = this.RAPIER.ColliderDesc.ball(physRadius)
+        .setRestitution(BALL_RESTITUTION)
+        .setFriction(BALL_FRICTION)
+        .setMass(BALL_MASS);
+
+      const collider = this.world!.createCollider(colliderDesc, body);
+
+      this.balls.push({ body, collider, type, number });
+    };
+
+    // Create cue ball
+    createBall(cuePhysX, cuePhysZ, 'cue', 0);
+
+    // Rack position (foot spot is typically 3/4 down the table length)
+    const rackPixelX = 900;
+    const rackPixelY = h / 2;
+    const rackPhysX = rackPixelX / SCALE;
+    const rackPhysZ = rackPixelY / SCALE;
+
+    // Rack the balls in triangle formation
+    // Standard 8-ball rack: 8-ball in center, one solid and one stripe in back corners
     const ballOrder = [1, 9, 2, 10, 8, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15];
     let ballIndex = 0;
-    const spacing = radius * 2.1;
+    const spacing = physRadius * 2.05; // Slightly more than diameter for tight rack
 
     for (let row = 0; row < 5; row++) {
       for (let col = 0; col <= row; col++) {
-        const x = startX + row * spacing * 0.866;
-        const y = startY + (col - row/2) * spacing;
+        // Triangle points toward cue ball (negative X direction)
+        const x = rackPhysX + row * spacing * 0.866; // cos(30°) ≈ 0.866
+        const z = rackPhysZ + (col - row / 2) * spacing;
 
-        const ball = Bodies.circle(x, y, radius, {
-          restitution: 0.9,
-          friction: 0.01,
-          frictionAir: 0.02,
-          density: 0.001,
-          label: `ball${ballOrder[ballIndex]}`,
-          frictionStatic: 0.5
-        });
+        const ballNum = ballOrder[ballIndex];
+        const type = ballNum === 8 ? 'eight' :
+                     ballNum < 8 ? 'solid' : 'stripe';
 
-        const type = ballOrder[ballIndex] === 8 ? 'eight' :
-                     ballOrder[ballIndex] < 8 ? 'solid' : 'stripe';
-
-        this.balls.push({
-          body: ball,
-          type: type,
-          number: ballOrder[ballIndex]
-        });
-
+        createBall(x, z, type, ballNum);
         ballIndex++;
       }
     }
-
-    Matter.World.add(this.world, this.balls.map(b => b.body));
   }
 
   setupEventListeners() {
@@ -473,9 +561,14 @@ class PoolGameEngine {
       if (this.canShoot() && !this.aiming) {
         const cueBall = this.balls.find(b => b.type === 'cue');
         if (cueBall) {
+          // Get ball position in pixel coordinates
+          const ballPos = cueBall.body.translation();
+          const ballPixelX = ballPos.x * SCALE;
+          const ballPixelY = ballPos.z * SCALE; // Z is our "Y" in 2D view
+
           this.aimAngle = Math.atan2(
-            this.mousePos.y - cueBall.body.position.y,
-            this.mousePos.x - cueBall.body.position.x
+            this.mousePos.y - ballPixelY,
+            this.mousePos.x - ballPixelX
           );
         }
       }
@@ -498,11 +591,16 @@ class PoolGameEngine {
     });
   }
 
-  canShoot() {
+  canShoot(): boolean {
     if (this.mode === 'online' && !this.isMyTurn) return false;
+
+    // Check if all balls have stopped moving
     return this.balls.every(ball => {
-      const speed = Matter.Vector.magnitude(ball.body.velocity);
-      return speed < 0.1;
+      const linvel = ball.body.linvel();
+      const angvel = ball.body.angvel();
+      const linearSpeed = Math.sqrt(linvel.x * linvel.x + linvel.y * linvel.y + linvel.z * linvel.z);
+      const angularSpeed = Math.sqrt(angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
+      return linearSpeed < 0.05 && angularSpeed < 0.1;
     });
   }
 
@@ -510,74 +608,88 @@ class PoolGameEngine {
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
-    const force = this.power * 0.025;
-    Matter.Body.applyForce(cueBall.body, cueBall.body.position, {
-      x: Math.cos(this.aimAngle) * force,
-      y: Math.sin(this.aimAngle) * force
-    });
+    // Apply impulse in the direction of the aim
+    // Power ranges from 0 to 2, scale appropriately for physics
+    const impulseStrength = this.power * 8; // Adjust multiplier for feel
+
+    // In 3D: X is horizontal, Z is the "depth" (our 2D Y)
+    const impulseX = Math.cos(this.aimAngle) * impulseStrength;
+    const impulseZ = Math.sin(this.aimAngle) * impulseStrength;
+
+    // Apply impulse at the ball's center (no spin for now)
+    cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
+
+    // Optional: Add some backspin/topspin based on where cue hits ball
+    // For realistic rotation, we can apply torque impulse
+    // This simulates the cue tip hitting slightly above/below center
+    const spinFactor = 0.3;
+    cueBall.body.applyTorqueImpulse({
+      x: -impulseZ * spinFactor, // Rotation around X affects Z motion
+      y: 0,
+      z: impulseX * spinFactor   // Rotation around Z affects X motion
+    }, true);
 
     this.gameStarted = true;
   }
 
   checkPockets() {
-    const { Bodies, World, Body } = Matter;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    const tableMargin = 40; // Visual cushion edge
-    const ballRadius = 12;
+    if (!this.world) return;
 
-    // Check if ball has fallen off the table (outside the table boundaries)
+    const pixelRadius = 12;
+    const h = this.canvas.height;
+
+    // Check if ball has fallen into a pocket
     for (let i = this.balls.length - 1; i >= 0; i--) {
       const ball = this.balls[i];
-      const pos = ball.body.position;
-      const isOutOfBounds = pos.x < tableMargin - ballRadius ||
-                           pos.x > w - tableMargin + ballRadius ||
-                           pos.y < tableMargin - ballRadius ||
-                           pos.y > h - tableMargin + ballRadius;
+      const pos = ball.body.translation();
 
-      // Also check proximity to pockets for more reliable detection
+      // Convert physics position to pixel position
+      const pixelX = pos.x * SCALE;
+      const pixelZ = pos.z * SCALE;
+
+      // Check proximity to pockets
       let isInPocket = false;
-      this.pockets.forEach(pocket => {
-        const dx = pos.x - pocket.x;
-        const dy = pos.y - pocket.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 25) {
+      for (const pocket of this.pockets) {
+        const dx = pixelX - pocket.x;
+        const dz = pixelZ - pocket.y;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        // Ball is pocketed if its center is within pocket radius
+        if (dist < pocket.radius) {
           isInPocket = true;
+          break;
         }
-      });
+      }
 
-      if (isOutOfBounds || isInPocket) {
-        World.remove(this.world, ball.body);
+      if (isInPocket) {
+        // Remove ball from physics world
+        this.world.removeRigidBody(ball.body);
 
         if (ball.type === 'cue') {
-          // Scratch - replace cue ball immediately
-          const resetX = 300;
-          const resetY = this.canvas.height / 2;
+          // Scratch - replace cue ball
+          const resetPixelX = 300;
+          const resetPixelZ = h / 2;
+          const resetPhysX = resetPixelX / SCALE;
+          const resetPhysZ = resetPixelZ / SCALE;
+          const physRadius = pixelRadius / SCALE;
 
-          const newCue = Bodies.circle(resetX, resetY, 12, {
-            restitution: 0.9,
-            friction: 0.01,
-            frictionAir: 0.02,
-            density: 0.001,
-            label: 'cue',
-            frictionStatic: 0.5,
-            isSleeping: false
-          });
+          // Create new cue ball
+          const bodyDesc = this.RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(resetPhysX, physRadius, resetPhysZ)
+            .setLinearDamping(LINEAR_DAMPING)
+            .setAngularDamping(ANGULAR_DAMPING)
+            .setCcdEnabled(true);
 
-          // Completely reset all physics properties
-          Body.setPosition(newCue, { x: resetX, y: resetY });
-          Body.setVelocity(newCue, { x: 0, y: 0 });
-          Body.setAngularVelocity(newCue, 0);
-          Body.setAngle(newCue, 0);
+          const newBody = this.world.createRigidBody(bodyDesc);
 
-          // Clear any forces
-          newCue.force = { x: 0, y: 0 };
-          newCue.torque = 0;
+          const colliderDesc = this.RAPIER.ColliderDesc.ball(physRadius)
+            .setRestitution(BALL_RESTITUTION)
+            .setFriction(BALL_FRICTION)
+            .setMass(BALL_MASS);
 
-          World.add(this.world, newCue);
+          const newCollider = this.world.createCollider(colliderDesc, newBody);
 
-          // Update the ball reference in the array
-          this.balls[i].body = newCue;
+          // Update the ball reference
+          this.balls[i] = { body: newBody, collider: newCollider, type: 'cue', number: 0 };
 
           this.switchTurn();
         } else if (ball.type === 'eight') {
@@ -590,6 +702,65 @@ class PoolGameEngine {
         }
       }
     }
+
+    // Apply rolling friction (simulating felt resistance)
+    // This keeps balls on the table and slows them down naturally
+    this.applyRollingFriction();
+  }
+
+  applyRollingFriction() {
+    const frictionCoeff = ROLLING_FRICTION;
+    const pixelRadius = 12;
+    const physRadius = pixelRadius / SCALE;
+
+    for (const ball of this.balls) {
+      const linvel = ball.body.linvel();
+      const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
+
+      if (speed > 0.01) {
+        // Apply friction force opposite to velocity
+        const frictionForce = frictionCoeff * BALL_MASS * 9.81; // F = μ * m * g
+        const deceleration = frictionForce / BALL_MASS;
+
+        // Reduce velocity slightly each frame
+        const newSpeed = Math.max(0, speed - deceleration * (1/60));
+        const factor = speed > 0 ? newSpeed / speed : 0;
+
+        ball.body.setLinvel({
+          x: linvel.x * factor,
+          y: linvel.y,
+          z: linvel.z * factor
+        }, true);
+
+        // Also apply rolling: angular velocity should match linear velocity
+        // For a rolling ball: ω = v / r
+        if (speed > 0.05) {
+          const targetAngVelX = -linvel.z / physRadius; // Rotation around X from Z motion
+          const targetAngVelZ = linvel.x / physRadius;  // Rotation around Z from X motion
+
+          const currentAngVel = ball.body.angvel();
+          // Blend toward proper rolling (gradual correction)
+          const blend = 0.1;
+          ball.body.setAngvel({
+            x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
+            y: currentAngVel.y * 0.95, // Damp vertical spin
+            z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
+          }, true);
+        }
+      } else {
+        // Stop very slow balls completely
+        ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      }
+
+      // Keep balls on the table (Y should be at ball radius)
+      const pos = ball.body.translation();
+      if (Math.abs(pos.y - physRadius) > 0.01) {
+        ball.body.setTranslation({ x: pos.x, y: physRadius, z: pos.z }, true);
+        const linv = ball.body.linvel();
+        ball.body.setLinvel({ x: linv.x, y: 0, z: linv.z }, true);
+      }
+    }
   }
 
   switchTurn() {
@@ -600,7 +771,10 @@ class PoolGameEngine {
   }
 
   gameLoop() {
-    Matter.Engine.update(this.engine, 1000 / 60);
+    if (!this.world) return;
+
+    // Step the physics simulation
+    this.world.step();
 
     this.checkPockets();
 
@@ -609,13 +783,14 @@ class PoolGameEngine {
     }
 
     this.render();
-    requestAnimationFrame(() => this.gameLoop());
+    this.animationId = requestAnimationFrame(() => this.gameLoop());
   }
 
   render() {
     const ctx = this.ctx;
     const w = this.canvas.width;
     const h = this.canvas.height;
+    const radius = 12;
 
     // Background
     ctx.fillStyle = 'hsl(25, 15%, 8%)';
@@ -634,23 +809,30 @@ class PoolGameEngine {
     this.pockets.forEach(pocket => {
       ctx.fillStyle = 'hsl(25, 15%, 10%)';
       ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, 25, 0, Math.PI * 2);
+      ctx.arc(pocket.x, pocket.y, pocket.radius, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = 'hsl(25, 15%, 5%)';
       ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, 18, 0, Math.PI * 2);
+      ctx.arc(pocket.x, pocket.y, pocket.radius * 0.72, 0, Math.PI * 2);
       ctx.fill();
     });
 
     // Balls
     this.balls.forEach(ball => {
-      const pos = ball.body.position;
-      const radius = 12;
-      const angle = ball.body.angle;
+      const pos = ball.body.translation();
+      const rot = ball.body.rotation(); // Quaternion
+
+      // Convert 3D position to 2D pixel coordinates
+      const pixelX = pos.x * SCALE;
+      const pixelY = pos.z * SCALE; // Z becomes Y in 2D view
+
+      // Extract rotation angle from quaternion for 2D display
+      // We'll use the rotation around the Y axis for visual spin effect
+      const angle = this.quaternionToYRotation(rot);
 
       ctx.save();
-      ctx.translate(pos.x, pos.y);
+      ctx.translate(pixelX, pixelY);
       ctx.rotate(angle);
 
       if (ball.type === 'cue') {
@@ -724,7 +906,7 @@ class PoolGameEngine {
         ctx.font = 'bold 9px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(ball.number, 0, 0);
+        ctx.fillText(String(ball.number), 0, 0);
 
         // Rotation indicator - small colored dot offset from center
         ctx.fillStyle = colors[colorIndex];
@@ -742,10 +924,14 @@ class PoolGameEngine {
     if (this.canShoot()) {
       const cueBall = this.balls.find(b => b.type === 'cue');
       if (cueBall) {
+        const pos = cueBall.body.translation();
+        const ballPixelX = pos.x * SCALE;
+        const ballPixelY = pos.z * SCALE;
+
         const cueLength = 200;
         const cueDistance = this.aiming ? 30 + (1 - this.power) * 50 : 30;
-        const startX = cueBall.body.position.x - Math.cos(this.aimAngle) * cueDistance;
-        const startY = cueBall.body.position.y - Math.sin(this.aimAngle) * cueDistance;
+        const startX = ballPixelX - Math.cos(this.aimAngle) * cueDistance;
+        const startY = ballPixelY - Math.sin(this.aimAngle) * cueDistance;
         const endX = startX - Math.cos(this.aimAngle) * cueLength;
         const endY = startY - Math.sin(this.aimAngle) * cueLength;
 
@@ -769,10 +955,10 @@ class PoolGameEngine {
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 5]);
         ctx.beginPath();
-        ctx.moveTo(cueBall.body.position.x, cueBall.body.position.y);
+        ctx.moveTo(ballPixelX, ballPixelY);
         ctx.lineTo(
-          cueBall.body.position.x + Math.cos(this.aimAngle) * 300,
-          cueBall.body.position.y + Math.sin(this.aimAngle) * 300
+          ballPixelX + Math.cos(this.aimAngle) * 300,
+          ballPixelY + Math.sin(this.aimAngle) * 300
         );
         ctx.stroke();
         ctx.setLineDash([]);
@@ -817,9 +1003,21 @@ class PoolGameEngine {
     ctx.fillText(turnText, w / 2, 30);
   }
 
+  // Helper to extract Y-axis rotation from quaternion for 2D display
+  quaternionToYRotation(q: { w: number, x: number, y: number, z: number }): number {
+    // Convert quaternion to Euler angles, extract Y rotation
+    const sinr_cosp = 2 * (q.w * q.y + q.z * q.x);
+    const cosr_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
+    return Math.atan2(sinr_cosp, cosr_cosp);
+  }
+
   destroy() {
-    if (this.engine) {
-      Matter.Engine.clear(this.engine);
+    if (this.animationId) {
+      cancelAnimationFrame(this.animationId);
+    }
+    if (this.world) {
+      this.world.free();
+      this.world = null;
     }
     if (this.connection) {
       this.connection.close();
