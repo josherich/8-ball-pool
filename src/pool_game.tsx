@@ -257,8 +257,9 @@ const BALL_FRICTION = 0.2;     // Surface friction between balls
 const CUSHION_RESTITUTION = 0.75; // Cushion bounce factor
 const CUSHION_FRICTION = 0.15;    // Cushion surface friction
 const ROLLING_FRICTION = 0.01;    // Felt resistance (simulated)
-const LINEAR_DAMPING = 0.3;       // Simulates rolling resistance on felt
+const LINEAR_DAMPING = 0.5;       // Simulates rolling resistance on felt
 const ANGULAR_DAMPING = 0.5;      // Simulates rotational friction on felt
+const MAX_SHOT_POWER = 3;         // Maximum shot power (affects impulse strength)
 
 // Canvas to physics scale (pixels per physics unit)
 const SCALE = 5;
@@ -613,7 +614,6 @@ class PoolGameEngine {
     if (!cueBall) return;
 
     // Apply impulse in the direction of the aim
-    // Power ranges from 0 to 2, scale appropriately for physics
     const impulseStrength = this.power * 8; // Adjust multiplier for feel
 
     // In 3D: X is horizontal, Z is the "depth" (our 2D Y)
@@ -783,7 +783,7 @@ class PoolGameEngine {
     this.checkPockets();
 
     if (this.aiming && this.powerIncreasing) {
-      this.power = Math.min(this.power + 0.02, 2);
+      this.power = Math.min(this.power + 0.02, MAX_SHOT_POWER);
     }
 
     this.render();
@@ -900,7 +900,7 @@ class PoolGameEngine {
         ctx.stroke();
 
         // Aiming line - always visible when can shoot
-        const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power, 1) : 0.4;
+        const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power / MAX_SHOT_POWER, 1) : 0.4;
         ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 5]);
@@ -925,7 +925,7 @@ class PoolGameEngine {
       ctx.fillStyle = 'hsl(25, 15%, 15%)';
       ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth, meterHeight);
 
-      const powerRatio = Math.min(this.power, 1);
+      const powerRatio = Math.min(this.power / MAX_SHOT_POWER, 1);
       ctx.fillStyle = `hsl(${120 - powerRatio * 120}, 70%, 50%)`;
       ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth * powerRatio, meterHeight);
 
