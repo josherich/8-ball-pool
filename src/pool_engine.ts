@@ -392,9 +392,9 @@ class PoolGameEngine {
       ctx.translate(pixelX + shadowOffsetX, pixelY + shadowOffsetY);
       ctx.scale(1, 0.6); // Flatten to ellipse
       const shadowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.1);
-      shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.48)');
-      shadowGradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.35)');
-      shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.79)');
+      shadowGradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.54)');
+      shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0.28)');
       ctx.fillStyle = shadowGradient;
       ctx.beginPath();
       ctx.arc(0, 0, radius * 1.1, 0, Math.PI * 2);
@@ -422,37 +422,88 @@ class PoolGameEngine {
         const ballPixelX = pos.x * SCALE;
         const ballPixelY = pos.z * SCALE;
 
-        const cueLength = 200;
+        const cueLength = 400;
         const cueDistance = this.aiming ? 30 + (1 - this.power) * 50 : 30;
         const startX = ballPixelX - Math.cos(this.aimAngle) * cueDistance;
         const startY = ballPixelY - Math.sin(this.aimAngle) * cueDistance;
         const endX = startX - Math.cos(this.aimAngle) * cueLength;
         const endY = startY - Math.sin(this.aimAngle) * cueLength;
+        const cueAngle = Math.atan2(endY - startY, endX - startX);
+
+        const tipLength = 6;
+        const ferruleLength = 10;
+        const shaftLength = cueLength * 0.62;
+        const buttLength = cueLength - tipLength - ferruleLength - shaftLength;
+        const shaftStart = tipLength + ferruleLength;
+        const buttStart = shaftStart + shaftLength;
 
         // Cue stick shadow
         const shadowOffsetX = 4;
         const shadowOffsetY = 5;
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
-        ctx.lineWidth = 7;
+        ctx.save();
+        ctx.translate(startX + shadowOffsetX, startY + shadowOffsetY);
+        ctx.rotate(cueAngle);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.28)';
+        ctx.lineWidth = 12;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.moveTo(startX + shadowOffsetX, startY + shadowOffsetY);
-        ctx.lineTo(endX + shadowOffsetX, endY + shadowOffsetY);
+        ctx.moveTo(0, 0);
+        ctx.lineTo(cueLength, 0);
         ctx.stroke();
+        ctx.restore();
 
-        // Cue stick gradient
-        const gradient = ctx.createLinearGradient(startX, startY, endX, endY);
-        gradient.addColorStop(0, 'hsl(25, 45%, 65%)');
-        gradient.addColorStop(0.7, 'hsl(25, 45%, 45%)');
-        gradient.addColorStop(1, 'hsl(25, 45%, 25%)');
+        ctx.save();
+        ctx.translate(startX, startY);
+        ctx.rotate(cueAngle);
 
-        ctx.strokeStyle = gradient;
-        ctx.lineWidth = 6;
-        ctx.lineCap = 'round';
+        const drawSegment = (x0: number, x1: number, width: number, style: CanvasRenderingContext2D['strokeStyle']) => {
+          ctx.strokeStyle = style;
+          ctx.lineWidth = width;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(x0, 0);
+          ctx.lineTo(x1, 0);
+          ctx.stroke();
+        };
+
+        // Tip (near ball)
+        drawSegment(0, tipLength, 7, '#1f2937');
+        ctx.fillStyle = '#111827';
         ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.lineTo(endX, endY);
+        ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Ferrule
+        drawSegment(tipLength, tipLength + ferruleLength, 7.4, '#e5e7eb');
+
+        // Shaft
+        const shaftGradient = ctx.createLinearGradient(shaftStart, 0, shaftStart + shaftLength, 0);
+        shaftGradient.addColorStop(0, 'hsl(35, 45%, 78%)');
+        shaftGradient.addColorStop(0.45, 'hsl(30, 42%, 62%)');
+        shaftGradient.addColorStop(1, 'hsl(25, 38%, 45%)');
+        drawSegment(shaftStart, shaftStart + shaftLength, 7.8, shaftGradient);
+
+        // Butt with wrap
+        const buttGradient = ctx.createLinearGradient(buttStart, 0, cueLength, 0);
+        buttGradient.addColorStop(0, 'hsl(20, 45%, 35%)');
+        buttGradient.addColorStop(0.6, 'hsl(18, 40%, 28%)');
+        buttGradient.addColorStop(1, 'hsl(12, 35%, 18%)');
+        drawSegment(buttStart, cueLength, 10, buttGradient);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(buttStart + 8, 0);
+        ctx.lineTo(buttStart + 28, 0);
         ctx.stroke();
+
+        // Butt cap
+        ctx.fillStyle = 'hsl(12, 35%, 14%)';
+        ctx.beginPath();
+        ctx.arc(cueLength, 0, 5.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
 
         // Find the first target ball that will be hit
         const targetBallInfo = this.findTargetBall(ballPixelX, ballPixelY, this.aimAngle, radius);

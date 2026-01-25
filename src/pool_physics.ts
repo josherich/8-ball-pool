@@ -18,7 +18,7 @@ export const BALL_FRICTION = 0.08;     // Surface friction between balls
 export const CUSHION_RESTITUTION = 0.75; // Cushion bounce factor
 export const CUSHION_FRICTION = 0.15;    // Cushion surface friction
 export const ROLLING_FRICTION = 0.01;    // Felt resistance (simulated)
-export const LINEAR_DAMPING = 0.5;       // Simulates rolling resistance on felt
+export const LINEAR_DAMPING = 0.3;       // Simulates rolling resistance on felt
 export const ANGULAR_DAMPING = 0.5;      // Simulates rotational friction on felt
 export const MAX_SHOT_POWER = 5;         // Maximum shot power (affects impulse strength)
 
