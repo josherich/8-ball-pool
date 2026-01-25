@@ -520,40 +520,76 @@ class PoolGameEngine {
   }
 
   checkPockets() {
-    this.balls.forEach((ball, index) => {
+    const { Bodies, World, Body } = Matter;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    const tableMargin = 40; // Visual cushion edge
+    const ballRadius = 12;
+
+    // Check if ball has fallen off the table (outside the table boundaries)
+    for (let i = this.balls.length - 1; i >= 0; i--) {
+      const ball = this.balls[i];
+      const pos = ball.body.position;
+      const isOutOfBounds = pos.x < tableMargin - ballRadius ||
+                           pos.x > w - tableMargin + ballRadius ||
+                           pos.y < tableMargin - ballRadius ||
+                           pos.y > h - tableMargin + ballRadius;
+
+      // Also check proximity to pockets for more reliable detection
+      let isInPocket = false;
       this.pockets.forEach(pocket => {
-        const dx = ball.body.position.x - pocket.x;
-        const dy = ball.body.position.y - pocket.y;
+        const dx = pos.x - pocket.x;
+        const dy = pos.y - pocket.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-
         if (dist < 25) {
-          Matter.World.remove(this.world, ball.body);
-
-          if (ball.type === 'cue') {
-            // Scratch - replace cue ball
-            setTimeout(() => {
-              const newCue = Matter.Bodies.circle(300, this.canvas.height/2, 12, {
-                restitution: 0.9,
-                friction: 0.01,
-                frictionAir: 0.02,
-                density: 0.001,
-                label: 'cue'
-              });
-              Matter.World.add(this.world, newCue);
-              ball.body = newCue;
-            }, 500);
-            this.switchTurn();
-          } else if (ball.type === 'eight') {
-            this.pocketed.eight = true;
-            this.balls.splice(index, 1);
-          } else {
-            if (ball.type === 'solid') this.pocketed.solids.push(ball.number);
-            else this.pocketed.stripes.push(ball.number);
-            this.balls.splice(index, 1);
-          }
+          isInPocket = true;
         }
       });
-    });
+
+      if (isOutOfBounds || isInPocket) {
+        World.remove(this.world, ball.body);
+
+        if (ball.type === 'cue') {
+          // Scratch - replace cue ball immediately
+          const resetX = 300;
+          const resetY = this.canvas.height / 2;
+
+          const newCue = Bodies.circle(resetX, resetY, 12, {
+            restitution: 0.9,
+            friction: 0.01,
+            frictionAir: 0.02,
+            density: 0.001,
+            label: 'cue',
+            frictionStatic: 0.5,
+            isSleeping: false
+          });
+
+          // Completely reset all physics properties
+          Body.setPosition(newCue, { x: resetX, y: resetY });
+          Body.setVelocity(newCue, { x: 0, y: 0 });
+          Body.setAngularVelocity(newCue, 0);
+          Body.setAngle(newCue, 0);
+
+          // Clear any forces
+          newCue.force = { x: 0, y: 0 };
+          newCue.torque = 0;
+
+          World.add(this.world, newCue);
+
+          // Update the ball reference in the array
+          this.balls[i].body = newCue;
+
+          this.switchTurn();
+        } else if (ball.type === 'eight') {
+          this.pocketed.eight = true;
+          this.balls.splice(i, 1);
+        } else {
+          if (ball.type === 'solid') this.pocketed.solids.push(ball.number);
+          else this.pocketed.stripes.push(ball.number);
+          this.balls.splice(i, 1);
+        }
+      }
+    }
   }
 
   switchTurn() {
