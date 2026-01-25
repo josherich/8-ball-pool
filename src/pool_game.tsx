@@ -818,6 +818,31 @@ class PoolGameEngine {
       ctx.fill();
     });
 
+    // Ball shadows (drawn first, below all balls)
+    this.balls.forEach(ball => {
+      const pos = ball.body.translation();
+      const pixelX = pos.x * SCALE;
+      const pixelY = pos.z * SCALE;
+
+      // Shadow offset (light from above, slightly behind)
+      const shadowOffsetX = 3;
+      const shadowOffsetY = 4;
+
+      // Draw elliptical shadow
+      ctx.save();
+      ctx.translate(pixelX + shadowOffsetX, pixelY + shadowOffsetY);
+      ctx.scale(1, 0.6); // Flatten to ellipse
+      const shadowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.1);
+      shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.48)');
+      shadowGradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.35)');
+      shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = shadowGradient;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
     // Balls
     this.balls.forEach(ball => {
       const pos = ball.body.translation();
@@ -844,6 +869,17 @@ class PoolGameEngine {
         const startY = ballPixelY - Math.sin(this.aimAngle) * cueDistance;
         const endX = startX - Math.cos(this.aimAngle) * cueLength;
         const endY = startY - Math.sin(this.aimAngle) * cueLength;
+
+        // Cue stick shadow
+        const shadowOffsetX = 4;
+        const shadowOffsetY = 5;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+        ctx.lineWidth = 7;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(startX + shadowOffsetX, startY + shadowOffsetY);
+        ctx.lineTo(endX + shadowOffsetX, endY + shadowOffsetY);
+        ctx.stroke();
 
         // Cue stick gradient
         const gradient = ctx.createLinearGradient(startX, startY, endX, endY);
