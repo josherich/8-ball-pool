@@ -312,15 +312,40 @@ class PoolGameEngine {
     const { Bodies } = Matter;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    const wallThickness = 40;
+    const cushionInset = 40; // Distance from edge to visual cushion
+    const ballRadius = 12; // Ball radius
+    const wallThickness = 20; // Thickness of the cushion walls
     const pocketRadius = 25;
 
-    // Walls
+    // Walls positioned so ball edge is flush with visual cushion
+    // Visual cushion is at 40px from edge, ball center should be at 40 + ballRadius when touching
+    const playableInset = cushionInset + ballRadius;
+
     const walls = [
-      Bodies.rectangle(w/2, wallThickness/2, w, wallThickness, { isStatic: true }),
-      Bodies.rectangle(w/2, h - wallThickness/2, w, wallThickness, { isStatic: true }),
-      Bodies.rectangle(wallThickness/2, h/2, wallThickness, h, { isStatic: true }),
-      Bodies.rectangle(w - wallThickness/2, h/2, wallThickness, h, { isStatic: true })
+      // Top wall - positioned so ball edge touches at y=40
+      Bodies.rectangle(w/2, playableInset, w - playableInset * 2, wallThickness, {
+        isStatic: true,
+        restitution: 0.9,
+        friction: 0.1
+      }),
+      // Bottom wall - positioned so ball edge touches at y=h-40
+      Bodies.rectangle(w/2, h - playableInset, w - playableInset * 2, wallThickness, {
+        isStatic: true,
+        restitution: 0.9,
+        friction: 0.1
+      }),
+      // Left wall - positioned so ball edge touches at x=40
+      Bodies.rectangle(playableInset, h/2, wallThickness, h - playableInset * 2, {
+        isStatic: true,
+        restitution: 0.9,
+        friction: 0.1
+      }),
+      // Right wall - positioned so ball edge touches at x=w-40
+      Bodies.rectangle(w - playableInset, h/2, wallThickness, h - playableInset * 2, {
+        isStatic: true,
+        restitution: 0.9,
+        friction: 0.1
+      })
     ];
 
     Matter.World.add(this.world, walls);
@@ -435,7 +460,7 @@ class PoolGameEngine {
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
-    const force = this.power * 0.015;
+    const force = this.power * 0.025;
     Matter.Body.applyForce(cueBall.body, cueBall.body.position, {
       x: Math.cos(this.aimAngle) * force,
       y: Math.sin(this.aimAngle) * force
@@ -494,7 +519,7 @@ class PoolGameEngine {
     this.checkPockets();
 
     if (this.aiming && this.powerIncreasing) {
-      this.power = Math.min(this.power + 0.02, 1);
+      this.power = Math.min(this.power + 0.02, 2);
     }
 
     this.render();
@@ -652,20 +677,19 @@ class PoolGameEngine {
         ctx.lineTo(endX, endY);
         ctx.stroke();
 
-        // Aiming line
-        if (this.aiming) {
-          ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 * this.power})`;
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 5]);
-          ctx.beginPath();
-          ctx.moveTo(cueBall.body.position.x, cueBall.body.position.y);
-          ctx.lineTo(
-            cueBall.body.position.x + Math.cos(this.aimAngle) * 300,
-            cueBall.body.position.y + Math.sin(this.aimAngle) * 300
-          );
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
+        // Aiming line - always visible when can shoot
+        const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power, 1) : 0.4;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(cueBall.body.position.x, cueBall.body.position.y);
+        ctx.lineTo(
+          cueBall.body.position.x + Math.cos(this.aimAngle) * 300,
+          cueBall.body.position.y + Math.sin(this.aimAngle) * 300
+        );
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
@@ -679,8 +703,9 @@ class PoolGameEngine {
       ctx.fillStyle = 'hsl(25, 15%, 15%)';
       ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth, meterHeight);
 
-      ctx.fillStyle = `hsl(${120 - this.power * 120}, 70%, 50%)`;
-      ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth * this.power, meterHeight);
+      const powerRatio = Math.min(this.power, 1);
+      ctx.fillStyle = `hsl(${120 - powerRatio * 120}, 70%, 50%)`;
+      ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth * powerRatio, meterHeight);
 
       ctx.strokeStyle = 'hsl(45, 80%, 65%)';
       ctx.lineWidth = 2;
