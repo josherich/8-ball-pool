@@ -767,6 +767,79 @@ class PoolGameEngine {
     }
   }
 
+  // Find the first target ball that will be hit by the cue ball along the aim line
+  findTargetBall(
+    cueBallX: number,
+    cueBallY: number,
+    aimAngle: number,
+    ballRadius: number
+  ): { impactX: number; impactY: number; targetBallX: number; targetBallY: number } | null {
+    const dirX = Math.cos(aimAngle);
+    const dirY = Math.sin(aimAngle);
+
+    let closestDist = Infinity;
+    let closestBall: { x: number; y: number } | null = null;
+
+    // Check each ball (except cue ball)
+    for (const ball of this.balls) {
+      if (ball.type === 'cue') continue;
+
+      const pos = ball.body.translation();
+      const targetX = pos.x * SCALE;
+      const targetY = pos.z * SCALE;
+
+      // Vector from cue ball to target ball
+      const toTargetX = targetX - cueBallX;
+      const toTargetY = targetY - cueBallY;
+
+      // Project target ball position onto aim line
+      const projDist = toTargetX * dirX + toTargetY * dirY;
+
+      // Skip if ball is behind the cue ball
+      if (projDist <= 0) continue;
+
+      // Find closest point on aim line to target ball center
+      const closestPointX = cueBallX + dirX * projDist;
+      const closestPointY = cueBallY + dirY * projDist;
+
+      // Distance from aim line to target ball center
+      const perpDistX = targetX - closestPointX;
+      const perpDistY = targetY - closestPointY;
+      const perpDist = Math.sqrt(perpDistX * perpDistX + perpDistY * perpDistY);
+
+      // Collision occurs if perpendicular distance < 2 * radius (two balls touching)
+      const collisionDist = ballRadius * 2;
+
+      if (perpDist < collisionDist) {
+        // Calculate how far back from closest point the collision actually occurs
+        // Using Pythagorean theorem: the cue ball center is at distance d along line
+        // where d^2 + perpDist^2 = collisionDist^2
+        const backDist = Math.sqrt(collisionDist * collisionDist - perpDist * perpDist);
+        const actualDist = projDist - backDist;
+
+        if (actualDist > ballRadius && actualDist < closestDist) {
+          closestDist = actualDist;
+          closestBall = { x: targetX, y: targetY };
+        }
+      }
+    }
+
+    if (closestBall) {
+      // Calculate the exact impact point (where cue ball center will be)
+      const impactX = cueBallX + dirX * closestDist;
+      const impactY = cueBallY + dirY * closestDist;
+
+      return {
+        impactX,
+        impactY,
+        targetBallX: closestBall.x,
+        targetBallY: closestBall.y
+      };
+    }
+
+    return null;
+  }
+
   switchTurn() {
     this.currentPlayer = this.currentPlayer === 1 ? 2 : 1;
     if (this.mode === 'online') {
@@ -949,6 +1022,9 @@ class PoolGameEngine {
         ctx.lineTo(endX, endY);
         ctx.stroke();
 
+        // Find the first target ball that will be hit
+        const targetBallInfo = this.findTargetBall(ballPixelX, ballPixelY, this.aimAngle, radius);
+
         // Aiming line - always visible when can shoot
         const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power / MAX_SHOT_POWER, 1) : 0.4;
         ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
@@ -956,12 +1032,51 @@ class PoolGameEngine {
         ctx.setLineDash([5, 5]);
         ctx.beginPath();
         ctx.moveTo(ballPixelX, ballPixelY);
-        ctx.lineTo(
-          ballPixelX + Math.cos(this.aimAngle) * 300,
-          ballPixelY + Math.sin(this.aimAngle) * 300
-        );
-        ctx.stroke();
-        ctx.setLineDash([]);
+
+        if (targetBallInfo) {
+          // Draw line to impact point (where cue ball center will be at collision)
+          ctx.lineTo(targetBallInfo.impactX, targetBallInfo.impactY);
+          ctx.stroke();
+
+          // Draw ghost ball at impact point (shows where cue ball will be when hitting)
+          ctx.setLineDash([]);
+          ctx.strokeStyle = `rgba(255, 255, 255, ${opacity + 0.2})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(targetBallInfo.impactX, targetBallInfo.impactY, radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Draw predicted path of target ball after collision
+          const targetDirX = targetBallInfo.targetBallX - targetBallInfo.impactX;
+          const targetDirY = targetBallInfo.targetBallY - targetBallInfo.impactY;
+          const targetDirLen = Math.sqrt(targetDirX * targetDirX + targetDirY * targetDirY);
+
+          if (targetDirLen > 0.1) {
+            const normX = targetDirX / targetDirLen;
+            const normY = targetDirY / targetDirLen;
+
+            // Draw target ball predicted path
+            ctx.strokeStyle = `rgba(255, 200, 100, ${opacity + 0.1})`;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(targetBallInfo.targetBallX, targetBallInfo.targetBallY);
+            ctx.lineTo(
+              targetBallInfo.targetBallX + normX * 150,
+              targetBallInfo.targetBallY + normY * 150
+            );
+            ctx.stroke();
+          }
+          ctx.setLineDash([]);
+        } else {
+          // No target ball - draw full aiming line
+          ctx.lineTo(
+            ballPixelX + Math.cos(this.aimAngle) * 300,
+            ballPixelY + Math.sin(this.aimAngle) * 300
+          );
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
     }
 
