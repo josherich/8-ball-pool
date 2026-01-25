@@ -316,39 +316,11 @@ class PoolGameEngine {
     const ballRadius = 12; // Ball radius
     const wallThickness = 20; // Thickness of the cushion walls
     const pocketRadius = 25;
+    const pocketGap = 50; // Gap in cushion for pockets
 
     // Walls positioned so ball edge is flush with visual cushion
     // Visual cushion is at 40px from edge, ball center should be at 40 + ballRadius when touching
     const playableInset = cushionInset + ballRadius;
-
-    const walls = [
-      // Top wall - positioned so ball edge touches at y=40
-      Bodies.rectangle(w/2, playableInset, w - playableInset * 2, wallThickness, {
-        isStatic: true,
-        restitution: 0.9,
-        friction: 0.1
-      }),
-      // Bottom wall - positioned so ball edge touches at y=h-40
-      Bodies.rectangle(w/2, h - playableInset, w - playableInset * 2, wallThickness, {
-        isStatic: true,
-        restitution: 0.9,
-        friction: 0.1
-      }),
-      // Left wall - positioned so ball edge touches at x=40
-      Bodies.rectangle(playableInset, h/2, wallThickness, h - playableInset * 2, {
-        isStatic: true,
-        restitution: 0.9,
-        friction: 0.1
-      }),
-      // Right wall - positioned so ball edge touches at x=w-40
-      Bodies.rectangle(w - playableInset, h/2, wallThickness, h - playableInset * 2, {
-        isStatic: true,
-        restitution: 0.9,
-        friction: 0.1
-      })
-    ];
-
-    Matter.World.add(this.world, walls);
 
     // Pocket positions
     this.pockets = [
@@ -359,6 +331,84 @@ class PoolGameEngine {
       { x: w/2, y: h - 50 },
       { x: w - 50, y: h - 50 }
     ];
+
+    const walls = [];
+
+    // Top wall - split into 2 segments with gap for middle pocket
+    const topY = playableInset;
+    walls.push(
+      // Left segment of top wall
+      Bodies.rectangle(
+        playableInset + (w/2 - playableInset - pocketGap) / 2,
+        topY,
+        w/2 - playableInset - pocketGap,
+        wallThickness,
+        { isStatic: true, restitution: 0.9, friction: 0.1 }
+      ),
+      // Right segment of top wall
+      Bodies.rectangle(
+        w/2 + pocketGap + (w/2 - playableInset - pocketGap) / 2,
+        topY,
+        w/2 - playableInset - pocketGap,
+        wallThickness,
+        { isStatic: true, restitution: 0.9, friction: 0.1 }
+      )
+    );
+
+    // Bottom wall - split into 2 segments with gap for middle pocket
+    const bottomY = h - playableInset;
+    walls.push(
+      // Left segment of bottom wall
+      Bodies.rectangle(
+        playableInset + (w/2 - playableInset - pocketGap) / 2,
+        bottomY,
+        w/2 - playableInset - pocketGap,
+        wallThickness,
+        { isStatic: true, restitution: 0.9, friction: 0.1 }
+      ),
+      // Right segment of bottom wall
+      Bodies.rectangle(
+        w/2 + pocketGap + (w/2 - playableInset - pocketGap) / 2,
+        bottomY,
+        w/2 - playableInset - pocketGap,
+        wallThickness,
+        { isStatic: true, restitution: 0.9, friction: 0.1 }
+      )
+    );
+
+    // Left wall - single segment in the middle (gaps at top and bottom corners)
+    const leftX = playableInset;
+    const leftWallStart = playableInset + pocketGap;
+    const leftWallEnd = h - playableInset - pocketGap;
+    const leftWallLength = leftWallEnd - leftWallStart;
+    walls.push(
+      // Middle segment of left wall (between top and bottom corner pockets)
+      Bodies.rectangle(
+        leftX,
+        leftWallStart + leftWallLength / 2,
+        wallThickness,
+        leftWallLength,
+        { isStatic: true, restitution: 0.9, friction: 0.1 }
+      )
+    );
+
+    // Right wall - single segment in the middle (gaps at top and bottom corners)
+    const rightX = w - playableInset;
+    const rightWallStart = playableInset + pocketGap;
+    const rightWallEnd = h - playableInset - pocketGap;
+    const rightWallLength = rightWallEnd - rightWallStart;
+    walls.push(
+      // Middle segment of right wall (between top and bottom corner pockets)
+      Bodies.rectangle(
+        rightX,
+        rightWallStart + rightWallLength / 2,
+        wallThickness,
+        rightWallLength,
+        { isStatic: true, restitution: 0.9, friction: 0.1 }
+      )
+    );
+
+    Matter.World.add(this.world, walls);
   }
 
   setupBalls() {
