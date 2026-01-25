@@ -10,6 +10,15 @@ export type Ball = {
 export type Pocket = { x: number; y: number; radius: number };
 export type Pocketed = { solids: number[]; stripes: number[]; eight: boolean };
 export type PocketedThisShot = { solids: number[]; stripes: number[]; cueBall: boolean };
+export type PocketedEvent = {
+  type: string;
+  number: number;
+  startX: number;
+  startY: number;
+  pocketX: number;
+  pocketY: number;
+  rotation: { w: number; x: number; y: number; z: number };
+};
 
 // Physics properties for realistic pool ball behavior
 export const BALL_MASS = 0.17;        // kg (standard pool ball is ~170g)
@@ -280,9 +289,10 @@ export const checkPockets = ({
   pocketed: Pocketed;
   pocketedThisShot: PocketedThisShot;
   RAPIER: typeof RAPIER;
-}) => {
+}): PocketedEvent[] => {
   const pixelRadius = 12;
   const h = canvas.height;
+  const pocketedEvents: PocketedEvent[] = [];
 
   // Check if ball has fallen into a pocket
   for (let i = balls.length - 1; i >= 0; i--) {
@@ -295,6 +305,7 @@ export const checkPockets = ({
 
     // Check proximity to pockets
     let isInPocket = false;
+    let pocketHit: Pocket | null = null;
     for (const pocket of pockets) {
       const dx = pixelX - pocket.x;
       const dz = pixelZ - pocket.y;
@@ -302,6 +313,7 @@ export const checkPockets = ({
       // Ball is pocketed if its center is within pocket radius
       if (dist < pocket.radius) {
         isInPocket = true;
+        pocketHit = pocket;
         break;
       }
     }
@@ -316,6 +328,31 @@ export const checkPockets = ({
     }
 
     if (isInPocket) {
+      if (!pocketHit) {
+        pocketHit = pockets.reduce((closest, pocket) => {
+          const dx = pixelX - pocket.x;
+          const dz = pixelZ - pocket.y;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (!closest || dist < closest.dist) {
+            return { pocket, dist };
+          }
+          return closest;
+        }, null as { pocket: Pocket; dist: number } | null)?.pocket || pockets[0];
+      }
+
+      if (ball.type !== 'cue') {
+        const rot = ball.body.rotation();
+        pocketedEvents.push({
+          type: ball.type,
+          number: ball.number,
+          startX: pixelX,
+          startY: pixelZ,
+          pocketX: pocketHit.x,
+          pocketY: pocketHit.y,
+          rotation: { w: rot.w, x: rot.x, y: rot.y, z: rot.z }
+        });
+      }
+
       // Remove ball from physics world
       world.removeRigidBody(ball.body);
 
@@ -367,6 +404,8 @@ export const checkPockets = ({
   // Apply rolling friction (simulating felt resistance)
   // This keeps balls on the table and slows them down naturally
   applyRollingFriction(balls);
+
+  return pocketedEvents;
 };
 
 const applyRollingFriction = (balls: Ball[]) => {

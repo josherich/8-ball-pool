@@ -8,10 +8,16 @@ import {
   checkPockets,
   type Ball,
   type Pocket,
+  type PocketedEvent,
   type Pocketed,
   type PocketedThisShot
 } from './pool_physics';
 import { allBallsStopped, canShoot, evaluateTurnSwitch } from './pool_rules';
+
+type PocketingAnimation = PocketedEvent & {
+  startTime: number;
+  duration: number;
+};
 
 class PoolGameEngine {
   canvas: HTMLCanvasElement;
@@ -39,6 +45,7 @@ class PoolGameEngine {
   pockets: Pocket[];
   shotInProgress: boolean;
   pocketedThisShot: PocketedThisShot;
+  pocketingAnimations: PocketingAnimation[];
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -66,6 +73,7 @@ class PoolGameEngine {
     this.pockets = [];
     this.shotInProgress = false;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
+    this.pocketingAnimations = [];
   }
 
   init() {
@@ -180,7 +188,7 @@ class PoolGameEngine {
 
   checkPockets() {
     if (!this.world) return;
-    checkPockets({
+    const pocketedEvents = checkPockets({
       world: this.world,
       canvas: this.canvas,
       balls: this.balls,
@@ -188,6 +196,15 @@ class PoolGameEngine {
       pocketed: this.pocketed,
       pocketedThisShot: this.pocketedThisShot,
       RAPIER: this.RAPIER
+    });
+
+    const now = performance.now();
+    pocketedEvents.forEach((event) => {
+      this.pocketingAnimations.push({
+        ...event,
+        startTime: now,
+        duration: 250
+      });
     });
   }
 
@@ -300,6 +317,7 @@ class PoolGameEngine {
     const w = this.canvas.width;
     const h = this.canvas.height;
     const radius = 12;
+    const now = performance.now();
 
     // Background
     ctx.fillStyle = 'hsl(25, 15%, 8%)';
@@ -413,6 +431,47 @@ class PoolGameEngine {
 
       this.renderBall3D(ctx, pixelX, pixelY, radius, ball.type, ball.number, rot);
     });
+
+    // Pocketing animations (balls falling into pockets)
+    if (this.pocketingAnimations.length > 0) {
+      this.pocketingAnimations = this.pocketingAnimations.filter((anim) => {
+        const elapsed = now - anim.startTime;
+        if (elapsed >= anim.duration) return false;
+
+        const t = Math.min(elapsed / anim.duration, 1);
+        const ease = t * t;
+        const drawX = anim.startX + (anim.pocketX - anim.startX) * ease;
+        const drawY = anim.startY + (anim.pocketY - anim.startY) * ease;
+        const scale = 1 - 0.75 * ease;
+        const alpha = 1 - 0.85 * ease;
+
+        // Shadow shrinks as ball drops
+        ctx.save();
+        ctx.globalAlpha = 0.45 * (1 - ease);
+        ctx.translate(drawX + 2, drawY + 3);
+        ctx.scale(1, 0.6);
+        ctx.beginPath();
+        ctx.arc(0, 0, radius * 1.05 * scale, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        this.renderBall3D(
+          ctx,
+          drawX,
+          drawY,
+          radius * scale,
+          anim.type,
+          anim.number,
+          anim.rotation
+        );
+        ctx.restore();
+
+        return true;
+      });
+    }
 
     // Cue stick
     if (this.canShoot()) {
