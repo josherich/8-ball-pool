@@ -423,7 +423,8 @@ class PoolGameEngine {
         const ballPixelY = pos.z * SCALE;
 
         const cueLength = 400;
-        const cueDistance = this.aiming ? 30 + (1 - this.power) * 50 : 30;
+        const powerRatio = Math.min(this.power / MAX_SHOT_POWER, 1);
+        const cueDistance = this.aiming ? 30 + powerRatio * 50 : 30;
         const startX = ballPixelX - Math.cos(this.aimAngle) * cueDistance;
         const startY = ballPixelY - Math.sin(this.aimAngle) * cueDistance;
         const endX = startX - Math.cos(this.aimAngle) * cueLength;
