@@ -23,7 +23,7 @@ export type PocketedEvent = {
 // Physics properties for realistic pool ball behavior
 export const BALL_MASS = 0.17;        // kg (standard pool ball is ~170g)
 export const BALL_RESTITUTION = 0.92; // Bounciness of ball-to-ball collisions
-export const BALL_FRICTION = 0.08;     // Surface friction between balls
+export const BALL_FRICTION = 0.1;     // Surface friction between balls
 export const CUSHION_RESTITUTION = 0.75; // Cushion bounce factor
 export const CUSHION_FRICTION = 0.15;    // Cushion surface friction
 export const ROLLING_FRICTION = 0.01;    // Felt resistance (simulated)

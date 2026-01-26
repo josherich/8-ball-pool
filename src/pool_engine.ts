@@ -122,10 +122,16 @@ class PoolGameEngine {
           const ballPixelX = ballPos.x * SCALE;
           const ballPixelY = ballPos.z * SCALE; // Z is our "Y" in 2D view
 
-          this.aimAngle = Math.atan2(
+          const targetAngle = Math.atan2(
             this.mousePos.y - ballPixelY,
             this.mousePos.x - ballPixelX
           );
+          const distance = Math.hypot(
+            this.mousePos.x - ballPixelX,
+            this.mousePos.y - ballPixelY
+          );
+          const smoothness = this.getAimSmoothing(distance);
+          this.aimAngle = this.interpolateAngle(this.aimAngle, targetAngle, smoothness);
         }
       }
     });
@@ -145,6 +151,20 @@ class PoolGameEngine {
         this.powerIncreasing = false;
       }
     });
+  }
+
+  getAimSmoothing(distance: number): number {
+    const nearDistance = 60;
+    const farDistance = 360;
+    const maxBlend = 0.6;
+    const minBlend = 0.12;
+    const t = Math.min(Math.max((distance - nearDistance) / (farDistance - nearDistance), 0), 1);
+    return maxBlend - t * (maxBlend - minBlend);
+  }
+
+  interpolateAngle(current: number, target: number, blend: number): number {
+    const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+    return current + delta * blend;
   }
 
   canShoot(): boolean {
