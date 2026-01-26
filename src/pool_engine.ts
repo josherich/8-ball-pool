@@ -347,6 +347,47 @@ class PoolGameEngine {
     ctx.fillStyle = 'hsl(145, 50%, 28%)';
     ctx.fillRect(40, 40, w - 80, h - 80);
 
+    // Cushion shadows (light from top)
+    const cushionInset = 40;
+    const cushionInnerInset = 60;
+    const cushionShadowDepth = 10;
+    const sideCushionShadowDepth = 3;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cushionInset, cushionInset, w - cushionInset * 2, h - cushionInset * 2);
+    ctx.clip();
+
+    const topShadow = ctx.createLinearGradient(0, cushionInnerInset, 0, cushionInnerInset + cushionShadowDepth);
+    topShadow.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
+    topShadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = topShadow;
+    ctx.fillRect(cushionInnerInset, cushionInnerInset, w - cushionInnerInset * 2, cushionShadowDepth);
+
+    const sideShadow = ctx.createLinearGradient(0, cushionInnerInset, 0, cushionInnerInset + cushionShadowDepth * 16);
+    sideShadow.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
+    sideShadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = sideShadow;
+    ctx.fillRect(cushionInnerInset, cushionInnerInset, sideCushionShadowDepth, h - cushionInnerInset * 2);
+    ctx.fillRect(w - cushionInnerInset - sideCushionShadowDepth, cushionInnerInset, sideCushionShadowDepth, h - cushionInnerInset * 2);
+
+    const bottomShadow = ctx.createLinearGradient(
+      0,
+      h - cushionInnerInset - cushionShadowDepth,
+      0,
+      h - cushionInnerInset
+    );
+    bottomShadow.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    bottomShadow.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
+    ctx.fillStyle = bottomShadow;
+    ctx.fillRect(
+      cushionInnerInset,
+      h - cushionInnerInset - cushionShadowDepth,
+      w - cushionInnerInset * 2,
+      cushionShadowDepth
+    );
+
+    ctx.restore();
+
     // Table markings
     ctx.strokeStyle = 'hsl(145, 50%, 35%)';
     ctx.lineWidth = 2;
