@@ -13,6 +13,7 @@ import {
   type PocketedThisShot
 } from './pool_physics';
 import { allBallsStopped, canShoot, evaluateTurnSwitch } from './pool_rules';
+import { OnlinePeer } from './online_peer';
 
 type PocketingAnimation = PocketedEvent & {
   startTime: number;
@@ -39,8 +40,7 @@ class PoolGameEngine {
   playerTypes: { player1: string | null; player2: string | null };
   mousePos: { x: number; y: number };
   isMyTurn: boolean;
-  peer: any;
-  connection: any;
+  peer: OnlinePeer | null;
   animationId: number | null;
   pockets: Pocket[];
   shotInProgress: boolean;
@@ -68,7 +68,6 @@ class PoolGameEngine {
     this.mousePos = { x: 0, y: 0 };
     this.isMyTurn = true;
     this.peer = null;
-    this.connection = null;
     this.animationId = null;
     this.pockets = [];
     this.shotInProgress = false;
@@ -101,11 +100,129 @@ class PoolGameEngine {
   setupWebRTC() {
     const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     this.callbacks.onRoomCodeGenerated(roomCode);
+
+    // Host is player 1
+    this.isMyTurn = true;
+    this.currentPlayer = 1;
+
+    const signalingUrl = (import.meta as any).env?.VITE_SIGNALING_URL || 'ws://localhost:8080';
+
+    this.peer = new OnlinePeer({
+      roomCode,
+      isHost: true,
+      signalingUrl,
+      events: {
+        onConnected: () => this.callbacks.onConnectionStateChange('connected'),
+        onDisconnected: () => this.callbacks.onConnectionStateChange('idle'),
+        onData: (msg) => this.onPeerMessage(msg)
+      }
+    });
+
+    this.peer.start();
   }
 
-  joinRoom(_code: string) {
+  joinRoom(code: string) {
+    const roomCode = code.trim().toUpperCase();
+    if (!roomCode) return;
+
+    // Joiner is player 2
     this.isMyTurn = false;
-    this.callbacks.onConnectionStateChange('connected');
+    this.currentPlayer = 1;
+
+    const signalingUrl = (import.meta as any).env?.VITE_SIGNALING_URL || 'ws://localhost:8080';
+
+    this.peer = new OnlinePeer({
+      roomCode,
+      isHost: false,
+      signalingUrl,
+      events: {
+        onConnected: () => this.callbacks.onConnectionStateChange('connected'),
+        onDisconnected: () => this.callbacks.onConnectionStateChange('idle'),
+        onData: (msg) => this.onPeerMessage(msg)
+      }
+    });
+
+    this.peer.start();
+  }
+
+  onPeerMessage(msg: any) {
+    if (!msg || typeof msg.type !== 'string') return;
+
+    if (msg.type === 'shot') {
+      const { angle, power } = msg;
+      if (typeof angle !== 'number' || typeof power !== 'number') return;
+      this.applyRemoteShot(angle, power);
+      return;
+    }
+
+    if (msg.type === 'state') {
+      this.applyRemoteState(msg.state);
+      return;
+    }
+  }
+
+  applyRemoteShot(angle: number, power: number) {
+    // Opponent just took their shot; we simulate it locally.
+    // Force shot even though canShoot() would be false.
+    this.aimAngle = angle;
+    this.power = power;
+    this.doShot({ allowRegardlessOfTurn: true });
+  }
+
+  getLocalState() {
+    return {
+      balls: this.balls.map(b => {
+        const t = b.body.translation();
+        const lv = b.body.linvel();
+        const av = b.body.angvel();
+        return {
+          type: b.type,
+          number: (b as any).number ?? null,
+          t: { x: t.x, y: t.y, z: t.z },
+          lv: { x: lv.x, y: lv.y, z: lv.z },
+          av: { x: av.x, y: av.y, z: av.z }
+        };
+      }),
+      currentPlayer: this.currentPlayer,
+      isMyTurn: this.isMyTurn,
+      playerTypes: this.playerTypes,
+      pocketed: this.pocketed
+    };
+  }
+
+  applyRemoteState(state: any) {
+    if (!state || !this.world) return;
+    if (!Array.isArray(state.balls)) return;
+
+    for (const incoming of state.balls) {
+      const ball = this.balls.find(b => {
+        if (b.type !== incoming.type) return false;
+        // numbered balls
+        if ((b as any).number != null || incoming.number != null) {
+          return (b as any).number === incoming.number;
+        }
+        return true;
+      });
+      if (!ball) continue;
+
+      const t = incoming.t;
+      const lv = incoming.lv;
+      const av = incoming.av;
+      if (!t || !lv || !av) continue;
+
+      try {
+        ball.body.setTranslation({ x: t.x, y: t.y, z: t.z }, true);
+        ball.body.setLinvel({ x: lv.x, y: lv.y, z: lv.z }, true);
+        ball.body.setAngvel({ x: av.x, y: av.y, z: av.z }, true);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (typeof state.currentPlayer === 'number') this.currentPlayer = state.currentPlayer;
+    if (typeof state.isMyTurn === 'boolean') this.isMyTurn = state.isMyTurn;
+    if (state.playerTypes) this.playerTypes = state.playerTypes;
+    if (state.pocketed) this.pocketed = state.pocketed;
   }
 
   setupEventListeners() {
@@ -176,6 +293,20 @@ class PoolGameEngine {
   }
 
   shoot() {
+    // Local player took a shot
+    const angle = this.aimAngle;
+    const power = this.power;
+
+    this.doShot({ allowRegardlessOfTurn: false });
+
+    if (this.mode === 'online' && this.peer) {
+      this.peer.send({ type: 'shot', angle, power });
+    }
+  }
+
+  doShot({ allowRegardlessOfTurn }: { allowRegardlessOfTurn: boolean }) {
+    if (!allowRegardlessOfTurn && !this.canShoot()) return;
+
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
@@ -190,18 +321,17 @@ class PoolGameEngine {
     const impulseX = Math.cos(this.aimAngle) * impulseStrength;
     const impulseZ = Math.sin(this.aimAngle) * impulseStrength;
 
-    // Apply impulse at the ball's center (no spin for now)
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
 
-    // Optional: Add some backspin/topspin based on where cue hits ball
-    // For realistic rotation, we can apply torque impulse
-    // This simulates the cue tip hitting slightly above/below center
     const spinFactor = 0.3;
-    cueBall.body.applyTorqueImpulse({
-      x: -impulseZ * spinFactor, // Rotation around X affects Z motion
-      y: 0,
-      z: impulseX * spinFactor   // Rotation around Z affects X motion
-    }, true);
+    cueBall.body.applyTorqueImpulse(
+      {
+        x: -impulseZ * spinFactor,
+        y: 0,
+        z: impulseX * spinFactor
+      },
+      true
+    );
 
     this.gameStarted = true;
   }
@@ -322,6 +452,11 @@ class PoolGameEngine {
       this.currentPlayer = result.currentPlayer;
       this.isMyTurn = result.isMyTurn;
       this.shotInProgress = false;
+
+      // After a shot resolves, sync authoritative state.
+      if (this.mode === 'online' && this.peer) {
+        this.peer.send({ type: 'state', state: this.getLocalState() });
+      }
     }
 
     if (this.aiming && this.powerIncreasing) {
@@ -1054,9 +1189,6 @@ class PoolGameEngine {
     if (this.world) {
       this.world.free();
       this.world = null;
-    }
-    if (this.connection) {
-      this.connection.close();
     }
     if (this.peer) {
       this.peer.destroy();

@@ -9,6 +9,7 @@ const PoolGame = () => {
   const [connectionState, setConnectionState] = useState('idle'); // idle, hosting, joining, connected
   const [roomCode, setRoomCode] = useState('');
   const [inputCode, setInputCode] = useState('');
+  const [pendingJoinCode, setPendingJoinCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [rapierLoaded, setRapierLoaded] = useState(false);
   const gameRef = useRef<PoolGameEngine | null>(null);
@@ -29,12 +30,18 @@ const PoolGame = () => {
     });
     gameRef.current.init();
 
+    // If the user chose to join before the engine was ready, join now.
+    if (pendingJoinCode && gameMode === 'online') {
+      gameRef.current.joinRoom(pendingJoinCode);
+      setPendingJoinCode(null);
+    }
+
     return () => {
       if (gameRef.current) {
         gameRef.current.destroy();
       }
     };
-  }, [gameMode, rapierLoaded]);
+  }, [gameMode, rapierLoaded, pendingJoinCode]);
 
   const handleHost = () => {
     setGameMode('online');
@@ -42,14 +49,19 @@ const PoolGame = () => {
   };
 
   const handleJoin = () => {
-    if (!inputCode.trim()) return;
+    const code = inputCode.trim();
+    if (!code) return;
     setGameMode('online');
     setConnectionState('joining');
-    setTimeout(() => {
-      if (gameRef.current) {
-        gameRef.current.joinRoom(inputCode);
-      }
-    }, 100);
+
+    // Engine instance is created asynchronously (after Rapier loads). Queue join.
+    setPendingJoinCode(code);
+
+    // If the engine already exists (e.g., switching within online), join immediately.
+    if (gameRef.current) {
+      gameRef.current.joinRoom(code);
+      setPendingJoinCode(null);
+    }
   };
 
   const copyRoomCode = () => {

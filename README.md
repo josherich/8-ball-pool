@@ -1,12 +1,12 @@
 # 🎱 8-Ball Pool Game
 
-A realistic 8-ball pool game built with React, TypeScript, and Matter.js physics engine.
+A realistic 8-ball pool game built with React, TypeScript, and Rapier (WASM) physics, with WebRTC-based multiplayer.
 
 ## Features
 
 - **Local 2-Player Mode**: Play on the same device with turn-based gameplay
-- **Online Multiplayer**: Host or join games using room codes
-- **Realistic Physics**: Matter.js powered ball collisions and movement
+- **Online Multiplayer (WebRTC)**: Host or join games using room codes
+- **Realistic Physics**: Rapier (WASM) powered ball collisions and movement
 - **Full Pool Mechanics**: 15 numbered balls, cue ball, 6 pockets, scratch detection
 - **Visual Polish**: Billiard table, colored balls with rotation, cue stick, power meter
 
@@ -108,10 +108,29 @@ pool-game/
 3. Release to shoot
 4. Players alternate turns
 
-### Online Mode
-1. **Host**: Click "Host Online Game" and share the room code
-2. **Join**: Enter the room code and click "Join"
-3. Take turns shooting when it's your turn
+### Online Mode (WebRTC)
+This project uses **WebRTC data channels** for peer-to-peer game sync. You still need a small **signaling server** for peers to find each other.
+
+1. Start the signaling server (one per network):
+   ```bash
+   npm run signal
+   ```
+   Default: `ws://localhost:8080`
+
+2. In another terminal, start the game:
+   ```bash
+   npm run dev
+   ```
+
+3. **Host**: Click "Host Online Game" and share the room code
+4. **Join**: Enter the room code and click "Join"
+
+#### Custom signaling URL
+Set `VITE_SIGNALING_URL` (e.g. when hosting signaling remotely):
+
+```bash
+VITE_SIGNALING_URL=wss://your-host.example.com npm run dev
+```
 
 ### Controls
 - **Mouse Move**: Aim the cue stick
@@ -123,7 +142,9 @@ pool-game/
 - **React 18** - UI framework
 - **TypeScript** - Type safety
 - **Vite** - Build tool and dev server
-- **Matter.js** - 2D physics engine (loaded via CDN)
+- **Rapier** (`@dimforge/rapier3d-compat`) - Physics engine (WASM)
+- **simple-peer** - WebRTC wrapper (data channel)
+- **ws** - Signaling server
 - **Lucide React** - Icons
 - **HTML5 Canvas** - Rendering
 
@@ -132,8 +153,9 @@ pool-game/
 ### Port already in use
 If port 5173 is busy, Vite will automatically use the next available port.
 
-### Matter.js not loading
-The game loads Matter.js from CDN. Ensure you have an internet connection.
+### Online multiplayer not connecting
+- Make sure the signaling server is running: `npm run signal`
+- If players are on different machines, the signaling URL must be reachable by both (set `VITE_SIGNALING_URL`).
 
 ### TypeScript errors
 Run `npm run build` to see detailed TypeScript errors.
