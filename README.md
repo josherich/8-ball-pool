@@ -142,3 +142,11 @@ Run `npm run build` to see detailed TypeScript errors.
 
 MIT
 
+## GitHub Pages Deployment
+
+This repo includes a GitHub Actions workflow that builds the app and publishes `dist/` to the `gh-pages` branch on every push to `master`/`main`.
+
+To enable GitHub Pages:
+1. Go to **Settings → Pages**
+2. Set **Source** to **Deploy from a branch**
+3. Select **Branch**: `gh-pages` and **Folder**: `/ (root)`

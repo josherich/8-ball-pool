@@ -551,12 +551,11 @@ class PoolGameEngine {
         const endY = startY - Math.sin(this.aimAngle) * cueLength;
         const cueAngle = Math.atan2(endY - startY, endX - startX);
 
-        const tipLength = 6;
-        const ferruleLength = 10;
-        const shaftLength = cueLength * 0.62;
-        const buttLength = cueLength - tipLength - ferruleLength - shaftLength;
-        const shaftStart = tipLength + ferruleLength;
-        const buttStart = shaftStart + shaftLength;
+	        const tipLength = 6;
+	        const ferruleLength = 10;
+	        const shaftLength = cueLength * 0.62;
+	        const shaftStart = tipLength + ferruleLength;
+	        const buttStart = shaftStart + shaftLength;
 
         // Cue stick shadow
         const shadowOffsetX = 4;
