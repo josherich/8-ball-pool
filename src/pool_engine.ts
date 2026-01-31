@@ -13,10 +13,30 @@ import {
   type PocketedThisShot
 } from './pool_physics';
 import { allBallsStopped, canShoot, evaluateTurnSwitch } from './pool_rules';
+import { OnlinePeer, type PeerMessage } from './online_peer';
 
 type PocketingAnimation = PocketedEvent & {
   startTime: number;
   duration: number;
+};
+
+// Serialized ball state for network sync
+type BallState = {
+  type: string;
+  number: number;
+  t: { x: number; y: number; z: number };
+  lv: { x: number; y: number; z: number };
+  av: { x: number; y: number; z: number };
+  r: { w: number; x: number; y: number; z: number };
+};
+
+// Full game state for sync
+type GameState = {
+  balls: BallState[];
+  currentPlayer: number;
+  playerTypes: { player1: string | null; player2: string | null };
+  pocketed: Pocketed;
+  shotInProgress: boolean;
 };
 
 class PoolGameEngine {
@@ -39,13 +59,19 @@ class PoolGameEngine {
   playerTypes: { player1: string | null; player2: string | null };
   mousePos: { x: number; y: number };
   isMyTurn: boolean;
-  peer: any;
-  connection: any;
+  peer: OnlinePeer | null;
   animationId: number | null;
   pockets: Pocket[];
   shotInProgress: boolean;
   pocketedThisShot: PocketedThisShot;
   pocketingAnimations: PocketingAnimation[];
+  
+  // Online-specific state
+  private isHost: boolean = false;
+  private roomCode: string | null = null;
+  private syncFrameCounter: number = 0;
+  private lastSyncedState: string = '';
+  private connectionStatus: string = 'idle';
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -68,7 +94,6 @@ class PoolGameEngine {
     this.mousePos = { x: 0, y: 0 };
     this.isMyTurn = true;
     this.peer = null;
-    this.connection = null;
     this.animationId = null;
     this.pockets = [];
     this.shotInProgress = false;
@@ -77,7 +102,6 @@ class PoolGameEngine {
   }
 
   init() {
-    // Create physics world with no gravity (pool table is horizontal)
     this.world = createWorld(this.RAPIER);
 
     if (!this.world) return;
@@ -99,13 +123,242 @@ class PoolGameEngine {
   }
 
   setupWebRTC() {
-    const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-    this.callbacks.onRoomCodeGenerated(roomCode);
+    const signalingUrl = (import.meta as any).env?.VITE_SIGNALING_URL || 'ws://localhost:8080';
+
+    this.peer = new OnlinePeer({
+      signalingUrl,
+      events: {
+        onConnected: () => this.handlePeerConnected(),
+        onDisconnected: (reason) => this.handlePeerDisconnected(reason),
+        onMessage: (msg) => this.handlePeerMessage(msg),
+        onError: (error) => this.handlePeerError(error),
+        onRoomJoined: (info) => this.handleRoomJoined(info),
+        onPeerCountChanged: (count) => this.handlePeerCountChanged(count)
+      }
+    });
+
+    // Create a room (host mode)
+    this.roomCode = this.peer.createRoom();
+    this.isHost = true;
+    this.isMyTurn = true; // Host goes first
+    this.currentPlayer = 1;
+    this.callbacks.onRoomCodeGenerated(this.roomCode);
+    this.connectionStatus = 'hosting';
   }
 
-  joinRoom(_code: string) {
-    this.isMyTurn = false;
+  joinRoom(code: string) {
+    if (!this.peer) {
+      const signalingUrl = (import.meta as any).env?.VITE_SIGNALING_URL || 'ws://localhost:8080';
+      
+      this.peer = new OnlinePeer({
+        signalingUrl,
+        events: {
+          onConnected: () => this.handlePeerConnected(),
+          onDisconnected: (reason) => this.handlePeerDisconnected(reason),
+          onMessage: (msg) => this.handlePeerMessage(msg),
+          onError: (error) => this.handlePeerError(error),
+          onRoomJoined: (info) => this.handleRoomJoined(info),
+          onPeerCountChanged: (count) => this.handlePeerCountChanged(count)
+        }
+      });
+    }
+
+    this.roomCode = code.toUpperCase();
+    this.isHost = false;
+    this.isMyTurn = false; // Guest waits for host
+    this.currentPlayer = 1;
+    this.connectionStatus = 'joining';
+    this.peer.joinRoom(code);
+  }
+
+  private handleRoomJoined(info: { room: string; isHost: boolean; peerCount: number }) {
+    this.roomCode = info.room;
+    this.isHost = info.isHost;
+    this.isMyTurn = info.isHost; // Host plays first
+    this.connectionStatus = info.isHost ? 'hosting' : 'joining';
+    
+    if (info.isHost) {
+      this.callbacks.onRoomCodeGenerated(info.room);
+    }
+  }
+
+  private handlePeerConnected() {
+    this.connectionStatus = 'connected';
     this.callbacks.onConnectionStateChange('connected');
+    
+    // Host sends initial game state to sync
+    if (this.isHost) {
+      this.sendFullState();
+    }
+  }
+
+  private handlePeerDisconnected(reason: string) {
+    this.connectionStatus = 'disconnected';
+    this.callbacks.onConnectionStateChange('idle');
+    console.log('[Pool] Peer disconnected:', reason);
+  }
+
+  private handlePeerError(error: string) {
+    console.error('[Pool] Peer error:', error);
+    this.callbacks.onConnectionStateChange('error');
+  }
+
+  private handlePeerCountChanged(count: number) {
+    console.log('[Pool] Room peer count:', count);
+  }
+
+  private handlePeerMessage(msg: PeerMessage) {
+    switch (msg.type) {
+      case 'shot':
+        this.handleRemoteShot(msg.data);
+        break;
+      case 'state-full':
+        this.applyFullState(msg.data);
+        break;
+      case 'state-delta':
+        this.applyDeltaState(msg.data);
+        break;
+      case 'turn-change':
+        this.handleRemoteTurnChange(msg.data);
+        break;
+      case 'game-event':
+        this.handleRemoteGameEvent(msg.data);
+        break;
+    }
+  }
+
+  private handleRemoteShot(data: { angle: number; power: number }) {
+    if (typeof data.angle !== 'number' || typeof data.power !== 'number') return;
+    
+    // Apply the shot locally
+    this.aimAngle = data.angle;
+    this.power = data.power;
+    this.doShot(true); // true = remote shot
+  }
+
+  private handleRemoteTurnChange(data: { currentPlayer: number; isHostTurn: boolean }) {
+    this.currentPlayer = data.currentPlayer;
+    // isMyTurn is opposite for guest vs host
+    this.isMyTurn = this.isHost ? data.isHostTurn : !data.isHostTurn;
+  }
+
+  private handleRemoteGameEvent(data: any) {
+    if (data.type === 'pocketed') {
+      this.pocketed = data.pocketed;
+      this.playerTypes = data.playerTypes;
+    }
+  }
+
+  // Get serialized ball state
+  private getBallState(ball: Ball): BallState {
+    const t = ball.body.translation();
+    const lv = ball.body.linvel();
+    const av = ball.body.angvel();
+    const r = ball.body.rotation();
+    return {
+      type: ball.type,
+      number: ball.number,
+      t: { x: t.x, y: t.y, z: t.z },
+      lv: { x: lv.x, y: lv.y, z: lv.z },
+      av: { x: av.x, y: av.y, z: av.z },
+      r: { w: r.w, x: r.x, y: r.y, z: r.z }
+    };
+  }
+
+  // Get full game state
+  private getFullState(): GameState {
+    return {
+      balls: this.balls.map(b => this.getBallState(b)),
+      currentPlayer: this.currentPlayer,
+      playerTypes: { ...this.playerTypes },
+      pocketed: { ...this.pocketed, solids: [...this.pocketed.solids], stripes: [...this.pocketed.stripes] },
+      shotInProgress: this.shotInProgress
+    };
+  }
+
+  // Send full state to peer
+  private sendFullState() {
+    if (!this.peer || this.connectionStatus !== 'connected') return;
+    this.peer.send({ type: 'state-full', data: this.getFullState() });
+  }
+
+  // Send delta (ball positions only) during motion
+  private sendDeltaState() {
+    if (!this.peer || this.connectionStatus !== 'connected') return;
+    
+    const balls = this.balls.map(b => this.getBallState(b));
+    const stateStr = JSON.stringify(balls);
+    
+    // Only send if state changed
+    if (stateStr === this.lastSyncedState) return;
+    this.lastSyncedState = stateStr;
+    
+    this.peer.send({ type: 'state-delta', data: balls });
+  }
+
+  // Apply full state from peer
+  private applyFullState(state: GameState) {
+    if (!state || !this.world) return;
+    
+    this.currentPlayer = state.currentPlayer;
+    this.playerTypes = state.playerTypes;
+    this.pocketed = state.pocketed;
+    this.shotInProgress = state.shotInProgress;
+    
+    // Update turn based on host/guest role
+    this.isMyTurn = this.isHost 
+      ? (state.currentPlayer === 1)
+      : (state.currentPlayer === 2);
+    
+    // Apply ball states
+    this.applyBallStates(state.balls);
+  }
+
+  // Apply delta state (ball positions only)
+  private applyDeltaState(balls: BallState[]) {
+    if (!balls || !this.world) return;
+    this.applyBallStates(balls);
+  }
+
+  // Apply ball states from network
+  private applyBallStates(states: BallState[]) {
+    for (const incoming of states) {
+      const ball = this.balls.find(b => {
+        if (b.type !== incoming.type) return false;
+        if (b.number !== incoming.number) return false;
+        return true;
+      });
+      
+      if (!ball) continue;
+
+      try {
+        ball.body.setTranslation(incoming.t, true);
+        ball.body.setLinvel(incoming.lv, true);
+        ball.body.setAngvel(incoming.av, true);
+        ball.body.setRotation(incoming.r, true);
+      } catch (err) {
+        console.warn('[Pool] Failed to apply ball state:', err);
+      }
+    }
+  }
+
+  // Broadcast turn change
+  private broadcastTurnChange() {
+    if (!this.peer || this.connectionStatus !== 'connected') return;
+    
+    this.peer.send({
+      type: 'turn-change',
+      data: {
+        currentPlayer: this.currentPlayer,
+        isHostTurn: this.currentPlayer === 1
+      }
+    });
+  }
+
+  // Broadcast game events (pocketing, etc.)
+  private broadcastGameEvent(event: any) {
+    if (!this.peer || this.connectionStatus !== 'connected') return;
+    this.peer.send({ type: 'game-event', data: event });
   }
 
   setupEventListeners() {
@@ -117,10 +370,9 @@ class PoolGameEngine {
       if (this.canShoot() && !this.aiming) {
         const cueBall = this.balls.find(b => b.type === 'cue');
         if (cueBall) {
-          // Get ball position in pixel coordinates
           const ballPos = cueBall.body.translation();
           const ballPixelX = ballPos.x * SCALE;
-          const ballPixelY = ballPos.z * SCALE; // Z is our "Y" in 2D view
+          const ballPixelY = ballPos.z * SCALE;
 
           const targetAngle = Math.atan2(
             this.mousePos.y - ballPixelY,
@@ -176,31 +428,38 @@ class PoolGameEngine {
   }
 
   shoot() {
+    const angle = this.aimAngle;
+    const power = this.power;
+
+    this.doShot(false); // false = local shot
+
+    // Send shot to peer
+    if (this.mode === 'online' && this.peer && this.connectionStatus === 'connected') {
+      this.peer.send({ type: 'shot', data: { angle, power } });
+    }
+  }
+
+  doShot(isRemote: boolean) {
+    // For local shots, check canShoot; for remote shots, allow regardless
+    if (!isRemote && !this.canShoot()) return;
+
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
-    // Start tracking this shot
     this.shotInProgress = true;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
 
-    // Apply impulse in the direction of the aim
-    const impulseStrength = this.power * 8; // Adjust multiplier for feel
-
-    // In 3D: X is horizontal, Z is the "depth" (our 2D Y)
+    const impulseStrength = this.power * 8;
     const impulseX = Math.cos(this.aimAngle) * impulseStrength;
     const impulseZ = Math.sin(this.aimAngle) * impulseStrength;
 
-    // Apply impulse at the ball's center (no spin for now)
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
 
-    // Optional: Add some backspin/topspin based on where cue hits ball
-    // For realistic rotation, we can apply torque impulse
-    // This simulates the cue tip hitting slightly above/below center
     const spinFactor = 0.3;
     cueBall.body.applyTorqueImpulse({
-      x: -impulseZ * spinFactor, // Rotation around X affects Z motion
+      x: -impulseZ * spinFactor,
       y: 0,
-      z: impulseX * spinFactor   // Rotation around Z affects X motion
+      z: impulseX * spinFactor
     }, true);
 
     this.gameStarted = true;
@@ -226,9 +485,17 @@ class PoolGameEngine {
         duration: 250
       });
     });
+
+    // Broadcast pocketing events
+    if (pocketedEvents.length > 0 && this.mode === 'online') {
+      this.broadcastGameEvent({
+        type: 'pocketed',
+        pocketed: this.pocketed,
+        playerTypes: this.playerTypes
+      });
+    }
   }
 
-  // Find the first target ball that will be hit by the cue ball along the aim line
   findTargetBall(
     cueBallX: number,
     cueBallY: number,
@@ -241,7 +508,6 @@ class PoolGameEngine {
     let closestDist = Infinity;
     let closestBall: { x: number; y: number } | null = null;
 
-    // Check each ball (except cue ball)
     for (const ball of this.balls) {
       if (ball.type === 'cue') continue;
 
@@ -249,32 +515,20 @@ class PoolGameEngine {
       const targetX = pos.x * SCALE;
       const targetY = pos.z * SCALE;
 
-      // Vector from cue ball to target ball
       const toTargetX = targetX - cueBallX;
       const toTargetY = targetY - cueBallY;
-
-      // Project target ball position onto aim line
       const projDist = toTargetX * dirX + toTargetY * dirY;
 
-      // Skip if ball is behind the cue ball
       if (projDist <= 0) continue;
 
-      // Find closest point on aim line to target ball center
       const closestPointX = cueBallX + dirX * projDist;
       const closestPointY = cueBallY + dirY * projDist;
-
-      // Distance from aim line to target ball center
       const perpDistX = targetX - closestPointX;
       const perpDistY = targetY - closestPointY;
       const perpDist = Math.sqrt(perpDistX * perpDistX + perpDistY * perpDistY);
-
-      // Collision occurs if perpendicular distance < 2 * radius (two balls touching)
       const collisionDist = ballRadius * 2;
 
       if (perpDist < collisionDist) {
-        // Calculate how far back from closest point the collision actually occurs
-        // Using Pythagorean theorem: the cue ball center is at distance d along line
-        // where d^2 + perpDist^2 = collisionDist^2
         const backDist = Math.sqrt(collisionDist * collisionDist - perpDist * perpDist);
         const actualDist = projDist - backDist;
 
@@ -286,7 +540,6 @@ class PoolGameEngine {
     }
 
     if (closestBall) {
-      // Calculate the exact impact point (where cue ball center will be)
       const impactX = cueBallX + dirX * closestDist;
       const impactY = cueBallY + dirY * closestDist;
 
@@ -304,12 +557,10 @@ class PoolGameEngine {
   gameLoop() {
     if (!this.world) return;
 
-    // Step the physics simulation
     this.world.step();
-
     this.checkPockets();
 
-    // Check if shot has ended (all balls stopped)
+    // Check if shot has ended
     if (this.shotInProgress && allBallsStopped(this.balls)) {
       const result = evaluateTurnSwitch({
         currentPlayer: this.currentPlayer,
@@ -318,10 +569,30 @@ class PoolGameEngine {
         playerTypes: this.playerTypes,
         pocketedThisShot: this.pocketedThisShot
       });
+      
+      const turnChanged = result.currentPlayer !== this.currentPlayer;
+      
       this.playerTypes = result.playerTypes;
       this.currentPlayer = result.currentPlayer;
       this.isMyTurn = result.isMyTurn;
       this.shotInProgress = false;
+
+      // Sync state after shot completes
+      if (this.mode === 'online') {
+        this.sendFullState();
+        if (turnChanged) {
+          this.broadcastTurnChange();
+        }
+      }
+    }
+
+    // Send delta updates during ball motion (throttled)
+    if (this.mode === 'online' && this.shotInProgress) {
+      this.syncFrameCounter++;
+      // Send updates every 3 frames (~20Hz at 60fps)
+      if (this.syncFrameCounter % 3 === 0) {
+        this.sendDeltaState();
+      }
     }
 
     if (this.aiming && this.powerIncreasing) {
@@ -347,7 +618,7 @@ class PoolGameEngine {
     ctx.fillStyle = 'hsl(145, 50%, 28%)';
     ctx.fillRect(40, 40, w - 80, h - 80);
 
-    // Cushion shadows (light from top)
+    // Cushion shadows
     const cushionInset = 40;
     const cushionInnerInset = 60;
     const cushionShadowDepth = 10;
@@ -370,21 +641,11 @@ class PoolGameEngine {
     ctx.fillRect(cushionInnerInset, cushionInnerInset, sideCushionShadowDepth, h - cushionInnerInset * 2);
     ctx.fillRect(w - cushionInnerInset - sideCushionShadowDepth, cushionInnerInset, sideCushionShadowDepth, h - cushionInnerInset * 2);
 
-    const bottomShadow = ctx.createLinearGradient(
-      0,
-      h - cushionInnerInset - cushionShadowDepth,
-      0,
-      h - cushionInnerInset
-    );
+    const bottomShadow = ctx.createLinearGradient(0, h - cushionInnerInset - cushionShadowDepth, 0, h - cushionInnerInset);
     bottomShadow.addColorStop(0, 'rgba(0, 0, 0, 0)');
     bottomShadow.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
     ctx.fillStyle = bottomShadow;
-    ctx.fillRect(
-      cushionInnerInset,
-      h - cushionInnerInset - cushionShadowDepth,
-      w - cushionInnerInset * 2,
-      cushionShadowDepth
-    );
+    ctx.fillRect(cushionInnerInset, h - cushionInnerInset - cushionShadowDepth, w - cushionInnerInset * 2, cushionShadowDepth);
 
     ctx.restore();
 
@@ -393,25 +654,19 @@ class PoolGameEngine {
     ctx.lineWidth = 2;
     ctx.strokeRect(60, 60, w - 120, h - 120);
 
-    // Pockets with proper openings
+    // Pockets
     this.pockets.forEach((pocket, index) => {
-      // Outer pocket rim (dark wood)
       ctx.fillStyle = 'hsl(25, 35%, 15%)';
       ctx.beginPath();
       ctx.arc(pocket.x, pocket.y, pocket.radius + 6, 0, Math.PI * 2);
       ctx.fill();
 
-      // Pocket opening shadow ring
       ctx.fillStyle = 'hsl(25, 15%, 8%)';
       ctx.beginPath();
       ctx.arc(pocket.x, pocket.y, pocket.radius + 2, 0, Math.PI * 2);
       ctx.fill();
 
-      // Main pocket hole (deep black)
-      const gradient = ctx.createRadialGradient(
-        pocket.x, pocket.y, 0,
-        pocket.x, pocket.y, pocket.radius
-      );
+      const gradient = ctx.createRadialGradient(pocket.x, pocket.y, 0, pocket.x, pocket.y, pocket.radius);
       gradient.addColorStop(0, 'hsl(0, 0%, 2%)');
       gradient.addColorStop(0.7, 'hsl(0, 0%, 5%)');
       gradient.addColorStop(1, 'hsl(0, 0%, 10%)');
@@ -420,35 +675,22 @@ class PoolGameEngine {
       ctx.arc(pocket.x, pocket.y, pocket.radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // Inner pocket depth effect
       ctx.fillStyle = 'hsl(0, 0%, 0%)';
       ctx.beginPath();
       ctx.arc(pocket.x, pocket.y, pocket.radius * 0.7, 0, Math.PI * 2);
       ctx.fill();
 
-      // Pocket opening highlights (leather/rubber edge)
       ctx.strokeStyle = 'hsl(25, 25%, 20%)';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      // Draw partial arc for 3D effect based on pocket position
-      // Corner pockets (0, 2, 3, 5) get diagonal openings
-      // Side pockets (1, 4) get horizontal openings
-      if (index === 0) { // Top-left corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.25, Math.PI * 1.25);
-      } else if (index === 2) { // Top-right corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * -0.25, Math.PI * 0.75);
-      } else if (index === 3) { // Bottom-left corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.75, Math.PI * 1.75);
-      } else if (index === 5) { // Bottom-right corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.25, Math.PI * 2.25);
-      } else if (index === 1) { // Top-middle
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.1, Math.PI * 0.9);
-      } else if (index === 4) { // Bottom-middle
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.1, Math.PI * 1.9);
-      }
+      if (index === 0) ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.25, Math.PI * 1.25);
+      else if (index === 2) ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * -0.25, Math.PI * 0.75);
+      else if (index === 3) ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.75, Math.PI * 1.75);
+      else if (index === 5) ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.25, Math.PI * 2.25);
+      else if (index === 1) ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.1, Math.PI * 0.9);
+      else if (index === 4) ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.1, Math.PI * 1.9);
       ctx.stroke();
 
-      // Subtle inner highlight for depth
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -456,20 +698,15 @@ class PoolGameEngine {
       ctx.stroke();
     });
 
-    // Ball shadows (drawn first, below all balls)
+    // Ball shadows
     this.balls.forEach(ball => {
       const pos = ball.body.translation();
       const pixelX = pos.x * SCALE;
       const pixelY = pos.z * SCALE;
 
-      // Shadow offset (light from above, slightly behind)
-      const shadowOffsetX = 3;
-      const shadowOffsetY = 4;
-
-      // Draw elliptical shadow
       ctx.save();
-      ctx.translate(pixelX + shadowOffsetX, pixelY + shadowOffsetY);
-      ctx.scale(1, 0.6); // Flatten to ellipse
+      ctx.translate(pixelX + 3, pixelY + 4);
+      ctx.scale(1, 0.6);
       const shadowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.1);
       shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.79)');
       shadowGradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.54)');
@@ -484,16 +721,13 @@ class PoolGameEngine {
     // Balls
     this.balls.forEach(ball => {
       const pos = ball.body.translation();
-      const rot = ball.body.rotation(); // Quaternion
-
-      // Convert 3D position to 2D pixel coordinates
+      const rot = ball.body.rotation();
       const pixelX = pos.x * SCALE;
-      const pixelY = pos.z * SCALE; // Z becomes Y in 2D view
-
+      const pixelY = pos.z * SCALE;
       this.renderBall3D(ctx, pixelX, pixelY, radius, ball.type, ball.number, rot);
     });
 
-    // Pocketing animations (balls falling into pockets)
+    // Pocketing animations
     if (this.pocketingAnimations.length > 0) {
       this.pocketingAnimations = this.pocketingAnimations.filter((anim) => {
         const elapsed = now - anim.startTime;
@@ -506,7 +740,6 @@ class PoolGameEngine {
         const scale = 1 - 0.75 * ease;
         const alpha = 1 - 0.85 * ease;
 
-        // Shadow shrinks as ball drops
         ctx.save();
         ctx.globalAlpha = 0.45 * (1 - ease);
         ctx.translate(drawX + 2, drawY + 3);
@@ -519,15 +752,7 @@ class PoolGameEngine {
 
         ctx.save();
         ctx.globalAlpha = alpha;
-        this.renderBall3D(
-          ctx,
-          drawX,
-          drawY,
-          radius * scale,
-          anim.type,
-          anim.number,
-          anim.rotation
-        );
+        this.renderBall3D(ctx, drawX, drawY, radius * scale, anim.type, anim.number, anim.rotation);
         ctx.restore();
 
         return true;
@@ -551,17 +776,15 @@ class PoolGameEngine {
         const endY = startY - Math.sin(this.aimAngle) * cueLength;
         const cueAngle = Math.atan2(endY - startY, endX - startX);
 
-	        const tipLength = 6;
-	        const ferruleLength = 10;
-	        const shaftLength = cueLength * 0.62;
-	        const shaftStart = tipLength + ferruleLength;
-	        const buttStart = shaftStart + shaftLength;
+        const tipLength = 6;
+        const ferruleLength = 10;
+        const shaftLength = cueLength * 0.62;
+        const shaftStart = tipLength + ferruleLength;
+        const buttStart = shaftStart + shaftLength;
 
-        // Cue stick shadow
-        const shadowOffsetX = 4;
-        const shadowOffsetY = 5;
+        // Cue shadow
         ctx.save();
-        ctx.translate(startX + shadowOffsetX, startY + shadowOffsetY);
+        ctx.translate(startX + 4, startY + 5);
         ctx.rotate(cueAngle);
         ctx.strokeStyle = 'rgba(0, 0, 0, 0.28)';
         ctx.lineWidth = 12;
@@ -586,24 +809,20 @@ class PoolGameEngine {
           ctx.stroke();
         };
 
-        // Tip (near ball)
         drawSegment(0, tipLength, 7, '#1f2937');
         ctx.fillStyle = '#111827';
         ctx.beginPath();
         ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
         ctx.fill();
 
-        // Ferrule
         drawSegment(tipLength, tipLength + ferruleLength, 7.4, '#e5e7eb');
 
-        // Shaft
         const shaftGradient = ctx.createLinearGradient(shaftStart, 0, shaftStart + shaftLength, 0);
         shaftGradient.addColorStop(0, 'hsl(35, 45%, 78%)');
         shaftGradient.addColorStop(0.45, 'hsl(30, 42%, 62%)');
         shaftGradient.addColorStop(1, 'hsl(25, 38%, 45%)');
         drawSegment(shaftStart, shaftStart + shaftLength, 7.8, shaftGradient);
 
-        // Butt with wrap
         const buttGradient = ctx.createLinearGradient(buttStart, 0, cueLength, 0);
         buttGradient.addColorStop(0, 'hsl(20, 45%, 35%)');
         buttGradient.addColorStop(0.6, 'hsl(18, 40%, 28%)');
@@ -617,7 +836,6 @@ class PoolGameEngine {
         ctx.lineTo(buttStart + 28, 0);
         ctx.stroke();
 
-        // Butt cap
         ctx.fillStyle = 'hsl(12, 35%, 14%)';
         ctx.beginPath();
         ctx.arc(cueLength, 0, 5.2, 0, Math.PI * 2);
@@ -625,10 +843,8 @@ class PoolGameEngine {
 
         ctx.restore();
 
-        // Find the first target ball that will be hit
+        // Aiming line
         const targetBallInfo = this.findTargetBall(ballPixelX, ballPixelY, this.aimAngle, radius);
-
-        // Aiming line - always visible when can shoot
         const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power / MAX_SHOT_POWER, 1) : 0.4;
         ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
         ctx.lineWidth = 2;
@@ -637,11 +853,9 @@ class PoolGameEngine {
         ctx.moveTo(ballPixelX, ballPixelY);
 
         if (targetBallInfo) {
-          // Draw line to impact point (where cue ball center will be at collision)
           ctx.lineTo(targetBallInfo.impactX, targetBallInfo.impactY);
           ctx.stroke();
 
-          // Draw ghost ball at impact point (shows where cue ball will be when hitting)
           ctx.setLineDash([]);
           ctx.strokeStyle = `rgba(255, 255, 255, ${opacity + 0.2})`;
           ctx.lineWidth = 2;
@@ -649,7 +863,6 @@ class PoolGameEngine {
           ctx.arc(targetBallInfo.impactX, targetBallInfo.impactY, radius, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Draw predicted path of target ball after collision
           const targetDirX = targetBallInfo.targetBallX - targetBallInfo.impactX;
           const targetDirY = targetBallInfo.targetBallY - targetBallInfo.impactY;
           const targetDirLen = Math.sqrt(targetDirX * targetDirX + targetDirY * targetDirY);
@@ -658,25 +871,17 @@ class PoolGameEngine {
             const normX = targetDirX / targetDirLen;
             const normY = targetDirY / targetDirLen;
 
-            // Draw target ball predicted path
             ctx.strokeStyle = `rgba(255, 200, 100, ${opacity + 0.1})`;
             ctx.lineWidth = 2;
             ctx.setLineDash([5, 5]);
             ctx.beginPath();
             ctx.moveTo(targetBallInfo.targetBallX, targetBallInfo.targetBallY);
-            ctx.lineTo(
-              targetBallInfo.targetBallX + normX * 150,
-              targetBallInfo.targetBallY + normY * 150
-            );
+            ctx.lineTo(targetBallInfo.targetBallX + normX * 150, targetBallInfo.targetBallY + normY * 150);
             ctx.stroke();
           }
           ctx.setLineDash([]);
         } else {
-          // No target ball - draw full aiming line
-          ctx.lineTo(
-            ballPixelX + Math.cos(this.aimAngle) * 300,
-            ballPixelY + Math.sin(this.aimAngle) * 300
-          );
+          ctx.lineTo(ballPixelX + Math.cos(this.aimAngle) * 300, ballPixelY + Math.sin(this.aimAngle) * 300);
           ctx.stroke();
           ctx.setLineDash([]);
         }
@@ -702,10 +907,10 @@ class PoolGameEngine {
       ctx.strokeRect(meterX - meterWidth/2, meterY, meterWidth, meterHeight);
     }
 
-    // Ball display and turn indicator
+    // Ball display
     this.renderBallDisplay(ctx, w, h);
 
-    // Current turn indicator
+    // Turn indicator
     const turnText = this.mode === 'online'
       ? (this.isMyTurn ? 'Your Turn' : 'Opponent\'s Turn')
       : `Player ${this.currentPlayer}'s Turn`;
@@ -714,21 +919,31 @@ class PoolGameEngine {
     ctx.font = 'bold 20px Arial';
     ctx.textAlign = 'center';
     ctx.fillText(turnText, w / 2 - 120, 30);
+
+    // Connection status indicator (online mode)
+    if (this.mode === 'online') {
+      const statusColor = this.connectionStatus === 'connected' ? 'hsl(145, 60%, 45%)' :
+                         this.connectionStatus === 'hosting' || this.connectionStatus === 'joining' ? 'hsl(45, 80%, 55%)' :
+                         'hsl(0, 60%, 50%)';
+      ctx.fillStyle = statusColor;
+      ctx.beginPath();
+      ctx.arc(w - 30, 30, 8, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = 'white';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText(this.connectionStatus, w - 45, 35);
+    }
   }
 
-  // Render the ball display showing solids on left, 8-ball in center, stripes on right
   renderBallDisplay(ctx: CanvasRenderingContext2D, canvasWidth: number, _canvasHeight: number) {
-    const displayY = 20; // Y position for ball display
-    const ballRadius = 10; // Smaller balls for display
-    const ballSpacing = 24; // Space between ball centers
+    const displayY = 20;
+    const ballRadius = 10;
+    const ballSpacing = 24;
 
-    // Colors for balls 1-7 (solids) and 9-15 (stripes use same colors)
-    const colors = [
-      '#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025',
-      '#056839', '#862234', '#333333'
-    ];
+    const colors = ['#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025', '#056839', '#862234', '#333333'];
 
-    // Render solids (1-7) on top left
     const solidsStartX = 90;
     for (let i = 1; i <= 7; i++) {
       const x = solidsStartX + (i - 1) * ballSpacing;
@@ -736,11 +951,9 @@ class PoolGameEngine {
       this.renderDisplayBall(ctx, x, displayY, ballRadius, 'solid', i, colors[(i - 1) % 8], isPocketed);
     }
 
-    // Render 8-ball in the middle
     const eightBallX = canvasWidth / 2 + 50;
     this.renderDisplayBall(ctx, eightBallX, displayY, ballRadius, 'eight', 8, '#333333', this.pocketed.eight);
 
-    // Render stripes (9-15) on top right
     const stripesEndX = canvasWidth - 90;
     for (let i = 9; i <= 15; i++) {
       const x = stripesEndX - (15 - i) * ballSpacing;
@@ -749,7 +962,6 @@ class PoolGameEngine {
     }
   }
 
-  // Render a single ball in the display (simplified 2D version)
   renderDisplayBall(
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -762,19 +974,16 @@ class PoolGameEngine {
   ) {
     ctx.save();
 
-    // Apply gray filter for pocketed balls
     if (isPocketed) {
       ctx.globalAlpha = 0.35;
     }
 
     if (ballType === 'eight') {
-      // Eight ball - black with white circle and number
       ctx.fillStyle = isPocketed ? '#555555' : 'black';
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // White circle with number
       ctx.fillStyle = isPocketed ? '#999999' : 'white';
       ctx.beginPath();
       ctx.arc(x, y, radius * 0.55, 0, Math.PI * 2);
@@ -786,13 +995,11 @@ class PoolGameEngine {
       ctx.textBaseline = 'middle';
       ctx.fillText('8', x, y);
     } else if (ballType === 'solid') {
-      // Solid ball
       ctx.fillStyle = isPocketed ? '#666666' : color;
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // White circle with number
       ctx.fillStyle = isPocketed ? '#999999' : 'white';
       ctx.beginPath();
       ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
@@ -804,13 +1011,11 @@ class PoolGameEngine {
       ctx.textBaseline = 'middle';
       ctx.fillText(String(ballNumber), x, y);
     } else if (ballType === 'stripe') {
-      // Stripe ball - white with colored stripe
       ctx.fillStyle = isPocketed ? '#888888' : 'white';
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // Draw stripe as a band across the middle
       ctx.save();
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -820,7 +1025,6 @@ class PoolGameEngine {
       ctx.fillRect(x - radius, y - radius * 0.4, radius * 2, radius * 0.8);
       ctx.restore();
 
-      // White circle with number
       ctx.fillStyle = isPocketed ? '#999999' : 'white';
       ctx.beginPath();
       ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
@@ -833,7 +1037,6 @@ class PoolGameEngine {
       ctx.fillText(String(ballNumber), x, y);
     }
 
-    // Add subtle border
     ctx.strokeStyle = isPocketed ? 'rgba(100, 100, 100, 0.5)' : 'rgba(0, 0, 0, 0.3)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -843,17 +1046,13 @@ class PoolGameEngine {
     ctx.restore();
   }
 
-  // Rotate a 3D point by a quaternion
   rotatePointByQuaternion(
     point: { x: number; y: number; z: number },
     q: { w: number; x: number; y: number; z: number }
   ): { x: number; y: number; z: number } {
-    // Quaternion rotation: q * p * q^(-1)
-    // Use conjugate (negate x,y,z) to correct rotation direction
     const px = point.x, py = point.y, pz = point.z;
     const qw = q.w, qx = -q.x, qy = -q.y, qz = -q.z;
 
-    // Calculate q * p (treating p as quaternion with w=0)
     const tx = 2 * (qy * pz - qz * py);
     const ty = 2 * (qz * px - qx * pz);
     const tz = 2 * (qx * py - qy * px);
@@ -865,7 +1064,6 @@ class PoolGameEngine {
     };
   }
 
-  // Render a ball with proper 3D rotation projected to 2D
   renderBall3D(
     ctx: CanvasRenderingContext2D,
     pixelX: number,
@@ -875,16 +1073,12 @@ class PoolGameEngine {
     ballNumber: number,
     quaternion: { w: number; x: number; y: number; z: number }
   ) {
-    const colors = [
-      '#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025',
-      '#056839', '#862234', '#333333'
-    ];
+    const colors = ['#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025', '#056839', '#862234', '#333333'];
 
     ctx.save();
     ctx.translate(pixelX, pixelY);
 
     if (ballType === 'cue') {
-      // White cue ball with 3D rotation indicator
       ctx.fillStyle = 'white';
       ctx.beginPath();
       ctx.arc(0, 0, radius, 0, Math.PI * 2);
@@ -893,45 +1087,36 @@ class PoolGameEngine {
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      // 3D rotation indicator - blue dot on sphere surface
       const dotPos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
-      // Project to 2D (viewing from above, Y is up toward camera)
-      // Only show if dot is on visible hemisphere (y > 0 means facing up/camera)
       if (dotPos3D.y > 0) {
-        // Project x,z to screen, scale by how much it's on the visible side
         const projX = dotPos3D.x * radius * 0.7;
         const projY = dotPos3D.z * radius * 0.7;
-        const dotSize = 2 + dotPos3D.y * 1.5; // Larger when more directly facing camera
+        const dotSize = 2 + dotPos3D.y * 1.5;
         ctx.fillStyle = `rgba(30, 100, 200, ${0.4 + dotPos3D.y * 0.6})`;
         ctx.beginPath();
         ctx.arc(projX, projY, dotSize, 0, Math.PI * 2);
         ctx.fill();
       }
     } else if (ballType === 'eight') {
-      // Eight ball - black with white circle and number
       ctx.fillStyle = 'black';
       ctx.beginPath();
       ctx.arc(0, 0, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // The number circle is on the ball surface - render it in 3D
-      // Place the number circle at a specific point that rotates with the ball
       const circlePos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
 
-      if (circlePos3D.y > -0.2) { // Show when somewhat visible
+      if (circlePos3D.y > -0.2) {
         const projX = circlePos3D.x * radius * 0.6;
         const projY = circlePos3D.z * radius * 0.6;
         const circleScale = Math.max(0, circlePos3D.y * 0.5 + 0.5);
         const circleRadius = radius * 0.5 * circleScale;
 
         if (circleRadius > 2) {
-          // White circle
           ctx.fillStyle = 'white';
           ctx.beginPath();
           ctx.arc(projX, projY, circleRadius, 0, Math.PI * 2);
           ctx.fill();
 
-          // Number 8
           if (circleScale > 0.4) {
             ctx.fillStyle = 'black';
             ctx.font = `bold ${Math.round(10 * circleScale)}px Arial`;
@@ -942,29 +1127,23 @@ class PoolGameEngine {
         }
       }
     } else {
-      // Solid or stripe ball
       const colorIndex = (ballNumber - 1) % 8;
       const ballColor = colors[colorIndex];
 
       if (ballType === 'solid') {
-        // Solid ball - entirely colored
         ctx.fillStyle = ballColor;
         ctx.beginPath();
         ctx.arc(0, 0, radius, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        // Stripe ball - white base with colored stripe band
         ctx.fillStyle = 'white';
         ctx.beginPath();
         ctx.arc(0, 0, radius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw the stripe as a 3D band around the ball's equator
-        // The stripe is a band in the XZ plane (Y near 0) in ball-local space
         this.renderStripe3D(ctx, radius, ballColor, quaternion);
       }
 
-      // Number circle (on ball surface, rotates with ball)
       const circlePos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
 
       if (circlePos3D.y > -0.2) {
@@ -993,25 +1172,21 @@ class PoolGameEngine {
     ctx.restore();
   }
 
-  // Render the stripe band on a stripe ball with 3D rotation
   renderStripe3D(
     ctx: CanvasRenderingContext2D,
     radius: number,
     color: string,
     quaternion: { w: number; x: number; y: number; z: number }
   ) {
-    // The stripe is a band around the equator of the ball
-    // We'll render it by drawing multiple small segments
     ctx.fillStyle = color;
 
-    const stripeHalfWidth = 0.35; // How wide the stripe is (in terms of Y from -0.35 to 0.35)
+    const stripeHalfWidth = 0.35;
     const segments = 32;
 
     for (let i = 0; i < segments; i++) {
       const angle1 = (i / segments) * Math.PI * 2;
       const angle2 = ((i + 1) / segments) * Math.PI * 2;
 
-      // Points on the stripe edges (top and bottom of stripe band)
       const points3D = [
         { x: Math.cos(angle1), y: stripeHalfWidth, z: Math.sin(angle1) },
         { x: Math.cos(angle2), y: stripeHalfWidth, z: Math.sin(angle2) },
@@ -1019,24 +1194,20 @@ class PoolGameEngine {
         { x: Math.cos(angle1), y: -stripeHalfWidth, z: Math.sin(angle1) }
       ];
 
-      // Normalize and rotate each point
       const rotatedPoints = points3D.map(p => {
         const len = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
         const normalized = { x: p.x / len, y: p.y / len, z: p.z / len };
         return this.rotatePointByQuaternion(normalized, quaternion);
       });
 
-      // Check if this segment is visible (average Y > some threshold)
       const avgY = (rotatedPoints[0].y + rotatedPoints[1].y + rotatedPoints[2].y + rotatedPoints[3].y) / 4;
-      if (avgY < -0.1) continue; // Skip back-facing segments
+      if (avgY < -0.1) continue;
 
-      // Project to 2D
       const projected = rotatedPoints.map(p => ({
         x: p.x * radius * 0.95,
         y: p.z * radius * 0.95
       }));
 
-      // Draw the quad
       ctx.beginPath();
       ctx.moveTo(projected[0].x, projected[0].y);
       ctx.lineTo(projected[1].x, projected[1].y);
@@ -1055,11 +1226,9 @@ class PoolGameEngine {
       this.world.free();
       this.world = null;
     }
-    if (this.connection) {
-      this.connection.close();
-    }
     if (this.peer) {
-      this.peer.destroy();
+      this.peer.disconnect();
+      this.peer = null;
     }
   }
 }

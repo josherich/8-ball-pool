@@ -1,103 +1,95 @@
 # 🎱 8-Ball Pool Game
 
-A realistic 8-ball pool game built with React, TypeScript, and Matter.js physics engine.
+A realistic 8-ball pool game built with React, TypeScript, and Rapier 3D physics engine, featuring WebRTC-based online multiplayer.
 
 ## Features
 
 - **Local 2-Player Mode**: Play on the same device with turn-based gameplay
-- **Online Multiplayer**: Host or join games using room codes
-- **Realistic Physics**: Matter.js powered ball collisions and movement
+- **Online Multiplayer (WebRTC)**: Real-time peer-to-peer gameplay with room codes
+- **Realistic 3D Physics**: Rapier 3D physics with proper ball rotation and cushion bouncing
 - **Full Pool Mechanics**: 15 numbered balls, cue ball, 6 pockets, scratch detection
-- **Visual Polish**: Billiard table, colored balls with rotation, cue stick, power meter
+- **Visual Polish**: 3D ball rendering with rotation, cue stick, aiming guide, power meter
+- **Efficient Network Sync**: Delta updates during ball motion, full state sync after shots
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed:
-
 - **Node.js** (v18 or higher) - [Download here](https://nodejs.org/)
-- **npm** (comes with Node.js) or **yarn** or **pnpm**
+- **npm** (comes with Node.js)
 
-### Installing Node.js
-
-**macOS:**
-```bash
-# Using Homebrew
-brew install node
-
-# Or download from https://nodejs.org/
-```
-
-**Windows:**
-- Download the installer from [nodejs.org](https://nodejs.org/)
-- Run the installer and follow the prompts
-
-**Linux:**
-```bash
-# Ubuntu/Debian
-sudo apt update
-sudo apt install nodejs npm
-
-# Fedora
-sudo dnf install nodejs npm
-```
-
-## Setup Instructions
+## Quick Start
 
 ### 1. Install Dependencies
 
-Navigate to the project directory and install dependencies:
-
 ```bash
-cd pool-game
 npm install
 ```
 
-Or if you prefer yarn:
+### 2. Start the Signaling Server (for online multiplayer)
+
+In one terminal:
 ```bash
-yarn install
+npm run signal
 ```
 
-Or with pnpm:
-```bash
-pnpm install
-```
+This starts the WebSocket signaling server on `ws://localhost:8080`.
 
-### 2. Start Development Server
+### 3. Start the Development Server
 
+In another terminal:
 ```bash
 npm run dev
 ```
 
-The game will be available at `http://localhost:5173` (or another port if 5173 is busy).
+The game will be available at `http://localhost:5173`.
 
-### 3. Build for Production
+## Online Multiplayer Architecture
 
-```bash
-npm run build
+The online multiplayer uses WebRTC for peer-to-peer communication:
+
+```
+┌─────────┐       ┌──────────────┐       ┌─────────┐
+│ Player1 │◄─────►│   Signaling  │◄─────►│ Player2 │
+│ (Host)  │       │    Server    │       │ (Guest) │
+└────┬────┘       └──────────────┘       └────┬────┘
+     │                                        │
+     │     WebRTC Data Channel (P2P)         │
+     └────────────────────────────────────────┘
 ```
 
-The built files will be in the `dist` directory.
+### Message Types
 
-### 4. Preview Production Build
+- **`shot`**: When a player takes a shot (angle + power)
+- **`state-full`**: Full game state sync (after shots complete)
+- **`state-delta`**: Ball position updates during motion (~20Hz)
+- **`turn-change`**: When the turn switches between players
+- **`game-event`**: Pocketing events, scratches, etc.
 
-```bash
-npm run preview
-```
+### Signaling Protocol
+
+The signaling server handles room management:
+- `join` - Join a room by code
+- `leave` - Leave current room
+- `signal` - Relay WebRTC signaling data
+- `peer-joined` / `peer-left` - Room membership notifications
 
 ## Project Structure
 
 ```
 pool-game/
 ├── src/
-│   ├── pool_game.tsx    # Main game component and engine
-│   ├── App.tsx          # Root application component
-│   ├── main.tsx         # Application entry point
-│   └── index.css        # Global styles
-├── index.html           # HTML template
-├── package.json         # Dependencies and scripts
-├── tsconfig.json        # TypeScript configuration
-├── vite.config.ts       # Vite configuration
-└── README.md           # This file
+│   ├── pool_engine.ts   # Main game engine with WebRTC integration
+│   ├── pool_physics.ts  # Rapier 3D physics setup
+│   ├── pool_rules.ts    # Turn switching and game rules
+│   ├── online_peer.ts   # WebRTC peer connection management
+│   ├── pool_game.tsx    # React UI component
+│   ├── App.tsx          # Root component
+│   └── main.tsx         # Entry point
+├── server/
+│   └── signaling-server.mjs  # WebSocket signaling server
+├── .env.example         # Environment variables template
+├── package.json
+├── vite.config.ts
+└── README.md
 ```
 
 ## How to Play
@@ -106,37 +98,70 @@ pool-game/
 1. Click "Local 2-Player" on the main menu
 2. Player 1 aims with the mouse and clicks to set power
 3. Release to shoot
-4. Players alternate turns
+4. Players alternate turns (unless you pocket your ball type)
 
 ### Online Mode
-1. **Host**: Click "Host Online Game" and share the room code
-2. **Join**: Enter the room code and click "Join"
-3. Take turns shooting when it's your turn
+1. **Host**: Click "Host Online Game" - a room code appears
+2. Share the room code with your opponent
+3. **Guest**: Enter the room code and click "Join"
+4. Wait for connection (status indicator in top-right)
+5. Host plays first, then turns alternate
 
 ### Controls
-- **Mouse Move**: Aim the cue stick
-- **Mouse Down**: Start power meter
-- **Mouse Up**: Shoot with current power
+- **Mouse Move**: Aim the cue stick (follows cursor)
+- **Mouse Down**: Start charging power
+- **Mouse Up**: Release shot at current power level
+- **Aiming Guide**: Shows predicted ball path and ghost ball at impact point
+
+## Environment Variables
+
+Create a `.env` file (or copy `.env.example`):
+
+```env
+# Local development
+VITE_SIGNALING_URL=ws://localhost:8080
+
+# Production (use secure WebSocket)
+# VITE_SIGNALING_URL=wss://your-signaling-server.com
+```
+
+## Production Deployment
+
+### Build the game
+```bash
+npm run build
+```
+
+### Deploy signaling server
+The signaling server (`server/signaling-server.mjs`) needs to be deployed separately. Options:
+- **Railway/Render/Fly.io** - Easy Node.js hosting
+- **VPS** - Run with pm2 or systemd
+- **Cloudflare Workers** - Use Durable Objects for WebSocket support
+
+Set `PORT` environment variable if needed (default: 8080).
 
 ## Technologies Used
 
 - **React 18** - UI framework
 - **TypeScript** - Type safety
 - **Vite** - Build tool and dev server
-- **Matter.js** - 2D physics engine (loaded via CDN)
-- **Lucide React** - Icons
-- **HTML5 Canvas** - Rendering
+- **Rapier 3D** - Physics engine (compiled to WebAssembly)
+- **simple-peer** - WebRTC wrapper
+- **WebSocket** - Signaling server
+- **HTML5 Canvas** - 2D rendering with 3D ball projection
 
 ## Troubleshooting
 
-### Port already in use
-If port 5173 is busy, Vite will automatically use the next available port.
+### "Room is full" error
+Rooms are limited to 2 players. If you see this, the host is already playing with someone else.
 
-### Matter.js not loading
-The game loads Matter.js from CDN. Ensure you have an internet connection.
+### Connection issues
+- Make sure both players can reach the signaling server
+- Check if WebRTC is blocked by firewall/NAT (STUN servers help with NAT traversal)
+- The game uses Google's public STUN servers by default
 
-### TypeScript errors
-Run `npm run build` to see detailed TypeScript errors.
+### Ball desync
+If balls appear to desync, the full state is resynchronized after each shot completes. Minor visual differences during motion are normal.
 
 ## License
 
@@ -144,9 +169,10 @@ MIT
 
 ## GitHub Pages Deployment
 
-This repo includes a GitHub Actions workflow that builds the app and publishes `dist/` to the `gh-pages` branch on every push to `master`/`main`.
+The repo includes a GitHub Actions workflow for `gh-pages` deployment:
 
-To enable GitHub Pages:
 1. Go to **Settings → Pages**
 2. Set **Source** to **Deploy from a branch**
-3. Select **Branch**: `gh-pages` and **Folder**: `/ (root)`
+3. Select **Branch**: `gh-pages`, **Folder**: `/ (root)`
+
+Note: Online multiplayer requires a separate signaling server deployment.
