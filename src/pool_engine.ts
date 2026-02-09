@@ -3,10 +3,12 @@ import SimplePeer from 'simple-peer';
 import {
   MAX_SHOT_POWER,
   SCALE,
+  FIXED_DT,
   createWorld,
   setupTable,
   setupBalls,
   checkPockets,
+  applyRollingFriction,
   type Ball,
   type Pocket,
   type PocketedEvent,
@@ -14,6 +16,14 @@ import {
   type PocketedThisShot
 } from './pool_physics';
 import { allBallsStopped, canShoot, evaluateTurnSwitch } from './pool_rules';
+import {
+  type ShotInput,
+  type GameMessage,
+  type GameStateSnapshot,
+  serializeBalls,
+  hashGameState,
+  restoreBallStates
+} from './pool_sync';
 
 type PocketingAnimation = PocketedEvent & {
   startTime: number;
@@ -51,6 +61,12 @@ class PoolGameEngine {
   pocketedThisShot: PocketedThisShot;
   pocketingAnimations: PocketingAnimation[];
   joinCode: string | null;
+  isHost: boolean;
+  accumulator: number;
+  lastTime: number;
+  lastHash: string | null;
+  lastSnapshot: GameStateSnapshot | null;
+  pendingPeerHash: string | null;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -83,6 +99,12 @@ class PoolGameEngine {
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
     this.pocketingAnimations = [];
     this.joinCode = callbacks.joinCode || null;
+    this.isHost = true;
+    this.accumulator = 0;
+    this.lastTime = 0;
+    this.lastHash = null;
+    this.lastSnapshot = null;
+    this.pendingPeerHash = null;
   }
 
   init() {
@@ -110,6 +132,7 @@ class PoolGameEngine {
   }
 
   setupWebRTC() {
+    this.isHost = true;
     // Connect to signaling server
     const SIGNALING_SERVER = 'ws://localhost:8080';
     this.ws = new WebSocket(SIGNALING_SERVER);
@@ -136,6 +159,7 @@ class PoolGameEngine {
   }
 
   joinRoom(code: string) {
+    this.isHost = false;
     this.isMyTurn = false;
     this.callbacks.onConnectionStateChange('joining');
 
@@ -164,7 +188,7 @@ class PoolGameEngine {
     };
   }
 
-  handleSignalingMessage(message: any, isHost: boolean) {
+  handleSignalingMessage(message: any, _isHost: boolean) {
     switch (message.type) {
       case 'room-created':
         this.roomCode = message.roomCode;
@@ -253,12 +277,64 @@ class PoolGameEngine {
     });
   }
 
-  handleGameMessage(message: any) {
-    // This will be implemented in Part 2 for game state synchronization
-    console.log('Received game message:', message);
+  handleGameMessage(message: GameMessage) {
+    switch (message.type) {
+      case 'shot':
+        this.applyShot(message.input);
+        break;
+
+      case 'state_hash':
+        if (this.shotInProgress) {
+          this.pendingPeerHash = message.hash;
+        } else {
+          this.handleStateHashComparison(message.hash);
+        }
+        break;
+
+      case 'state_sync':
+        if (!this.isHost && this.world) {
+          this.balls = restoreBallStates(
+            this.world, this.balls, message.snapshot, this.RAPIER
+          );
+          this.pocketed = {
+            solids: [...message.snapshot.pocketed.solids],
+            stripes: [...message.snapshot.pocketed.stripes],
+            eight: message.snapshot.pocketed.eight
+          };
+        }
+        break;
+
+      case 'turn':
+        if (!this.isHost) {
+          this.currentPlayer = message.state.currentPlayer;
+          this.playerTypes = { ...message.state.playerTypes };
+          this.pocketed = {
+            solids: [...message.state.pocketed.solids],
+            stripes: [...message.state.pocketed.stripes],
+            eight: message.state.pocketed.eight
+          };
+          this.isMyTurn = this.currentPlayer === 2;
+        }
+        break;
+
+      case 'game_over':
+        this.callbacks.onGameOver?.({ winner: message.winner, reason: message.reason });
+        break;
+    }
   }
 
-  sendGameMessage(message: any) {
+  handleStateHashComparison(peerHash: string) {
+    if (!this.lastHash) return;
+
+    if (this.lastHash !== peerHash) {
+      console.warn('State hash mismatch!', this.lastHash, 'vs', peerHash);
+      if (this.isHost && this.lastSnapshot) {
+        this.sendGameMessage({ type: 'state_sync', snapshot: this.lastSnapshot });
+      }
+    }
+  }
+
+  sendGameMessage(message: GameMessage) {
     if (this.peer && this.peer.connected) {
       this.peer.send(JSON.stringify(message));
     }
@@ -335,28 +411,36 @@ class PoolGameEngine {
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
-    // Start tracking this shot
+    const input: ShotInput = {
+      angle: this.aimAngle,
+      power: this.power,
+      spinFactor: 0.3
+    };
+
+    if (this.mode === 'online') {
+      this.sendGameMessage({ type: 'shot', input });
+    }
+
+    this.applyShot(input);
+  }
+
+  applyShot(input: ShotInput) {
+    const cueBall = this.balls.find(b => b.type === 'cue');
+    if (!cueBall) return;
+
     this.shotInProgress = true;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
 
-    // Apply impulse in the direction of the aim
-    const impulseStrength = this.power * 8; // Adjust multiplier for feel
+    const impulseStrength = input.power * 8;
+    const impulseX = Math.cos(input.angle) * impulseStrength;
+    const impulseZ = Math.sin(input.angle) * impulseStrength;
 
-    // In 3D: X is horizontal, Z is the "depth" (our 2D Y)
-    const impulseX = Math.cos(this.aimAngle) * impulseStrength;
-    const impulseZ = Math.sin(this.aimAngle) * impulseStrength;
-
-    // Apply impulse at the ball's center (no spin for now)
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
 
-    // Optional: Add some backspin/topspin based on where cue hits ball
-    // For realistic rotation, we can apply torque impulse
-    // This simulates the cue tip hitting slightly above/below center
-    const spinFactor = 0.3;
     cueBall.body.applyTorqueImpulse({
-      x: -impulseZ * spinFactor, // Rotation around X affects Z motion
+      x: -impulseZ * input.spinFactor,
       y: 0,
-      z: impulseX * spinFactor   // Rotation around Z affects X motion
+      z: impulseX * input.spinFactor
     }, true);
 
     this.gameStarted = true;
@@ -457,27 +541,27 @@ class PoolGameEngine {
     return null;
   }
 
-  gameLoop() {
+  gameLoop(currentTime: number = performance.now()) {
     if (!this.world) return;
 
-    // Step the physics simulation
-    this.world.step();
+    if (this.lastTime === 0) this.lastTime = currentTime;
+    const frameTime = Math.min((currentTime - this.lastTime) / 1000, 0.05);
+    this.lastTime = currentTime;
 
-    this.checkPockets();
+    // Fixed timestep physics
+    this.accumulator += frameTime;
+    this.world.timestep = FIXED_DT;
+
+    while (this.accumulator >= FIXED_DT) {
+      this.world.step();
+      this.checkPockets();
+      applyRollingFriction(this.balls, FIXED_DT);
+      this.accumulator -= FIXED_DT;
+    }
 
     // Check if shot has ended (all balls stopped)
     if (this.shotInProgress && allBallsStopped(this.balls)) {
-      const result = evaluateTurnSwitch({
-        currentPlayer: this.currentPlayer,
-        mode: this.mode,
-        isMyTurn: this.isMyTurn,
-        playerTypes: this.playerTypes,
-        pocketedThisShot: this.pocketedThisShot
-      });
-      this.playerTypes = result.playerTypes;
-      this.currentPlayer = result.currentPlayer;
-      this.isMyTurn = result.isMyTurn;
-      this.shotInProgress = false;
+      this.onShotSettled();
     }
 
     if (this.aiming && this.powerIncreasing) {
@@ -485,7 +569,78 @@ class PoolGameEngine {
     }
 
     this.render();
-    this.animationId = requestAnimationFrame(() => this.gameLoop());
+    this.animationId = requestAnimationFrame((t) => this.gameLoop(t));
+  }
+
+  onShotSettled() {
+    const result = evaluateTurnSwitch({
+      currentPlayer: this.currentPlayer,
+      mode: this.mode,
+      isMyTurn: this.isMyTurn,
+      playerTypes: this.playerTypes,
+      pocketedThisShot: this.pocketedThisShot
+    });
+    this.playerTypes = result.playerTypes;
+    this.currentPlayer = result.currentPlayer;
+    this.isMyTurn = result.isMyTurn;
+    this.shotInProgress = false;
+
+    if (this.mode === 'online') {
+      const snapshot: GameStateSnapshot = {
+        balls: serializeBalls(this.balls),
+        pocketed: {
+          solids: [...this.pocketed.solids],
+          stripes: [...this.pocketed.stripes],
+          eight: this.pocketed.eight
+        }
+      };
+      const hash = hashGameState(snapshot);
+      this.lastSnapshot = snapshot;
+      this.lastHash = hash;
+
+      this.sendGameMessage({ type: 'state_hash', hash });
+
+      this.sendGameMessage({
+        type: 'turn',
+        state: {
+          currentPlayer: this.currentPlayer,
+          playerTypes: { ...this.playerTypes },
+          pocketed: {
+            solids: [...this.pocketed.solids],
+            stripes: [...this.pocketed.stripes],
+            eight: this.pocketed.eight
+          }
+        }
+      });
+
+      if (this.pendingPeerHash) {
+        this.handleStateHashComparison(this.pendingPeerHash);
+        this.pendingPeerHash = null;
+      }
+
+      if (this.pocketed.eight) {
+        this.handleGameOver();
+      }
+    }
+  }
+
+  handleGameOver() {
+    const currentType = this.currentPlayer === 1
+      ? this.playerTypes.player1
+      : this.playerTypes.player2;
+
+    const allOwnPocketed = currentType === 'solid'
+      ? this.pocketed.solids.length === 7
+      : this.pocketed.stripes.length === 7;
+
+    const winner = allOwnPocketed ? this.currentPlayer : (this.currentPlayer === 1 ? 2 : 1);
+    const reason = allOwnPocketed ? 'Pocketed 8-ball after clearing all own balls' : 'Pocketed 8-ball early';
+
+    if (this.mode === 'online') {
+      this.sendGameMessage({ type: 'game_over', winner, reason });
+    }
+
+    this.callbacks.onGameOver?.({ winner, reason });
   }
 
   render() {
@@ -590,17 +745,17 @@ class PoolGameEngine {
       // Corner pockets (0, 2, 3, 5) get diagonal openings
       // Side pockets (1, 4) get horizontal openings
       if (index === 0) { // Top-left corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.25, Math.PI * 1.25);
-      } else if (index === 2) { // Top-right corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * -0.25, Math.PI * 0.75);
-      } else if (index === 3) { // Bottom-left corner
         ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.75, Math.PI * 1.75);
-      } else if (index === 5) { // Bottom-right corner
+      } else if (index === 2) { // Top-right corner
         ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.25, Math.PI * 2.25);
+      } else if (index === 3) { // Bottom-left corner
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.25, Math.PI * 1.25);
+      } else if (index === 5) { // Bottom-right corner
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * -0.25, Math.PI * 0.75);
       } else if (index === 1) { // Top-middle
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.1, Math.PI * 0.9);
-      } else if (index === 4) { // Bottom-middle
         ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.1, Math.PI * 1.9);
+      } else if (index === 4) { // Bottom-middle
+        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.1, Math.PI * 0.9);
       }
       ctx.stroke();
 

@@ -34,6 +34,9 @@ export const MAX_SHOT_POWER = 5;         // Maximum shot power (affects impulse 
 // Canvas to physics scale (pixels per physics unit)
 export const SCALE = 5;
 
+// Fixed timestep for deterministic physics (120 Hz)
+export const FIXED_DT = 1 / 120;
+
 export const createWorld = (rapier: typeof RAPIER) =>
   new rapier.World({ x: 0.0, y: 0.0, z: 0.0 });
 
@@ -401,14 +404,10 @@ export const checkPockets = ({
     }
   }
 
-  // Apply rolling friction (simulating felt resistance)
-  // This keeps balls on the table and slows them down naturally
-  applyRollingFriction(balls);
-
   return pocketedEvents;
 };
 
-const applyRollingFriction = (balls: Ball[]) => {
+export const applyRollingFriction = (balls: Ball[], dt: number) => {
   const frictionCoeff = ROLLING_FRICTION;
   const pixelRadius = 12;
   const physRadius = pixelRadius / SCALE;
@@ -422,8 +421,8 @@ const applyRollingFriction = (balls: Ball[]) => {
       const frictionForce = frictionCoeff * BALL_MASS * 9.81; // F = mu * m * g
       const deceleration = frictionForce / BALL_MASS;
 
-      // Reduce velocity slightly each frame
-      const newSpeed = Math.max(0, speed - deceleration * (1/60));
+      // Reduce velocity slightly each step
+      const newSpeed = Math.max(0, speed - deceleration * dt);
       const factor = speed > 0 ? newSpeed / speed : 0;
 
       ball.body.setLinvel({

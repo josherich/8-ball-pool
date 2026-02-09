@@ -5,4 +5,9 @@ export default defineConfig({
     environment: 'node',
     globals: true,
   },
+  resolve: {
+    alias: {
+      '@dimforge/rapier3d-compat': '@dimforge/rapier3d-compat/rapier.es.js',
+    },
+  },
 });
