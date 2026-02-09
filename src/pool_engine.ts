@@ -1,4 +1,5 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
+import SimplePeer from 'simple-peer';
 import {
   MAX_SHOT_POWER,
   SCALE,
@@ -39,13 +40,17 @@ class PoolGameEngine {
   playerTypes: { player1: string | null; player2: string | null };
   mousePos: { x: number; y: number };
   isMyTurn: boolean;
-  peer: any;
+  peer: SimplePeer.Instance | null;
   connection: any;
   animationId: number | null;
+  ws: WebSocket | null;
+  roomCode: string | null;
+  clientId: string | null;
   pockets: Pocket[];
   shotInProgress: boolean;
   pocketedThisShot: PocketedThisShot;
   pocketingAnimations: PocketingAnimation[];
+  joinCode: string | null;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -70,10 +75,14 @@ class PoolGameEngine {
     this.peer = null;
     this.connection = null;
     this.animationId = null;
+    this.ws = null;
+    this.roomCode = null;
+    this.clientId = null;
     this.pockets = [];
     this.shotInProgress = false;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
     this.pocketingAnimations = [];
+    this.joinCode = callbacks.joinCode || null;
   }
 
   init() {
@@ -91,21 +100,168 @@ class PoolGameEngine {
     this.balls = setupBalls({ canvas: this.canvas, world: this.world, RAPIER: this.RAPIER });
     this.setupEventListeners();
 
-    if (this.mode === 'online') {
+    if (this.mode === 'online' && !this.joinCode) {
       this.setupWebRTC();
+    } else if (this.mode === 'online' && this.joinCode) {
+      this.joinRoom(this.joinCode);
     }
 
     this.gameLoop();
   }
 
   setupWebRTC() {
-    const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-    this.callbacks.onRoomCodeGenerated(roomCode);
+    // Connect to signaling server
+    const SIGNALING_SERVER = 'ws://localhost:8080';
+    this.ws = new WebSocket(SIGNALING_SERVER);
+
+    this.ws.onopen = () => {
+      console.log('Connected to signaling server');
+      // Request to create a room
+      this.ws!.send(JSON.stringify({ type: 'create-room' }));
+    };
+
+    this.ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      this.handleSignalingMessage(message, true);
+    };
+
+    this.ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      this.callbacks.onConnectionStateChange('error');
+    };
+
+    this.ws.onclose = () => {
+      console.log('Disconnected from signaling server');
+    };
   }
 
-  joinRoom(_code: string) {
+  joinRoom(code: string) {
     this.isMyTurn = false;
-    this.callbacks.onConnectionStateChange('connected');
+    this.callbacks.onConnectionStateChange('joining');
+
+    // Connect to signaling server
+    const SIGNALING_SERVER = 'ws://localhost:8080';
+    this.ws = new WebSocket(SIGNALING_SERVER);
+
+    this.ws.onopen = () => {
+      console.log('Connected to signaling server');
+      // Request to join the room
+      this.ws!.send(JSON.stringify({ type: 'join-room', roomCode: code }));
+    };
+
+    this.ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      this.handleSignalingMessage(message, false);
+    };
+
+    this.ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      this.callbacks.onConnectionStateChange('error');
+    };
+
+    this.ws.onclose = () => {
+      console.log('Disconnected from signaling server');
+    };
+  }
+
+  handleSignalingMessage(message: any, isHost: boolean) {
+    switch (message.type) {
+      case 'room-created':
+        this.roomCode = message.roomCode;
+        this.clientId = message.clientId;
+        this.callbacks.onRoomCodeGenerated(message.roomCode);
+        console.log('Room created:', message.roomCode);
+        // Host creates peer connection and waits for guest
+        this.initializePeerConnection(true);
+        break;
+
+      case 'room-joined':
+        this.roomCode = message.roomCode;
+        this.clientId = message.clientId;
+        console.log('Joined room:', message.roomCode);
+        // Guest creates peer connection and initiates connection
+        this.callbacks.onConnectionStateChange('connected'); // Guest is connected to host, will establish WebRTC connection next
+        this.initializePeerConnection(false);
+        break;
+
+      case 'peer-connected':
+        console.log('Peer connected to room');
+        // Host knows guest has joined, connection will be established via WebRTC signaling
+        break;
+
+      case 'signal':
+        // Forward WebRTC signal to peer connection
+        if (this.peer && message.signal) {
+          this.peer.signal(message.signal);
+        }
+        break;
+
+      case 'error':
+        console.error('Signaling error:', message.error);
+        this.callbacks.onConnectionStateChange('error');
+        break;
+    }
+  }
+
+  initializePeerConnection(isHost: boolean) {
+    // Create SimplePeer instance
+    this.peer = new SimplePeer({
+      initiator: !isHost, // Guest initiates the connection
+      trickle: true,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      }
+    });
+
+    // Handle signaling data (SDP offers/answers, ICE candidates)
+    this.peer.on('signal', (data) => {
+      console.log('Sending signal data');
+      if (this.ws && this.roomCode) {
+        this.ws.send(JSON.stringify({
+          type: 'signal',
+          roomCode: this.roomCode,
+          signal: data
+        }));
+      }
+    });
+
+    // Handle connection establishment
+    this.peer.on('connect', () => {
+      console.log('WebRTC connection established!');
+      this.callbacks.onConnectionStateChange('connected');
+    });
+
+    // Handle incoming data
+    this.peer.on('data', (data) => {
+      const message = JSON.parse(data.toString());
+      this.handleGameMessage(message);
+    });
+
+    // Handle errors
+    this.peer.on('error', (err) => {
+      console.error('Peer connection error:', err);
+      this.callbacks.onConnectionStateChange('error');
+    });
+
+    // Handle close
+    this.peer.on('close', () => {
+      console.log('Peer connection closed');
+      this.callbacks.onConnectionStateChange('idle');
+    });
+  }
+
+  handleGameMessage(message: any) {
+    // This will be implemented in Part 2 for game state synchronization
+    console.log('Received game message:', message);
+  }
+
+  sendGameMessage(message: any) {
+    if (this.peer && this.peer.connected) {
+      this.peer.send(JSON.stringify(message));
+    }
   }
 
   setupEventListeners() {
@@ -1060,6 +1216,11 @@ class PoolGameEngine {
     }
     if (this.peer) {
       this.peer.destroy();
+      this.peer = null;
+    }
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
     }
   }
 }

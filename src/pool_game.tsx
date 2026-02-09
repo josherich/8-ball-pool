@@ -12,6 +12,7 @@ const PoolGame = () => {
   const [copied, setCopied] = useState(false);
   const [rapierLoaded, setRapierLoaded] = useState(false);
   const gameRef = useRef<PoolGameEngine | null>(null);
+  const joinCodeRef = useRef<string | null>(null);
 
   // Initialize Rapier WASM
   useEffect(() => {
@@ -25,7 +26,8 @@ const PoolGame = () => {
 
     gameRef.current = new PoolGameEngine(canvasRef.current, gameMode, RAPIER, {
       onConnectionStateChange: setConnectionState,
-      onRoomCodeGenerated: setRoomCode
+      onRoomCodeGenerated: setRoomCode,
+      joinCode: joinCodeRef.current
     });
     gameRef.current.init();
 
@@ -43,13 +45,9 @@ const PoolGame = () => {
 
   const handleJoin = () => {
     if (!inputCode.trim()) return;
+    joinCodeRef.current = inputCode.trim();
     setGameMode('online');
     setConnectionState('joining');
-    setTimeout(() => {
-      if (gameRef.current) {
-        gameRef.current.joinRoom(inputCode);
-      }
-    }, 100);
   };
 
   const copyRoomCode = () => {
