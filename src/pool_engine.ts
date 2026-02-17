@@ -25,6 +25,7 @@ import {
   hashGameState,
   restoreBallStates
 } from './pool_sync';
+import PoolAudioManager from './pool_audio';
 
 type PocketingAnimation = PocketedEvent & {
   startTime: number;
@@ -74,6 +75,8 @@ class PoolGameEngine {
   cueSpinOffset: { x: number; y: number };
   draggingCueSpin: boolean;
   cueControlExpanded: boolean;
+  audio: PoolAudioManager;
+  recentCollisions: Map<string, number>;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -118,6 +121,8 @@ class PoolGameEngine {
     this.cueSpinOffset = { x: 0, y: 0 };
     this.draggingCueSpin = false;
     this.cueControlExpanded = false;
+    this.audio = new PoolAudioManager();
+    this.recentCollisions = new Map();
   }
 
   init() {
@@ -134,6 +139,7 @@ class PoolGameEngine {
     this.cushionBodies = cushionBodies;
     this.balls = setupBalls({ canvas: this.canvas, world: this.world, RAPIER: this.RAPIER });
     this.setupEventListeners();
+    this.audio.playGameOpening();
 
     // Debug UI for tuning physics parameters (toggle with '/' pressed 3 times)
     this.debugUI = createDebugUI();
@@ -405,6 +411,8 @@ class PoolGameEngine {
     });
 
     this.canvas.addEventListener('mousedown', () => {
+      this.audio.unlock();
+
       if (this.cueControlExpanded) {
         if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, true)) {
           this.draggingCueSpin = true;
@@ -605,7 +613,44 @@ class PoolGameEngine {
       z: impulseX * input.topspin
     }, true);
 
+    this.audio.playShot(input.power);
     this.gameStarted = true;
+  }
+
+  detectBallCollisions(now: number) {
+    const ballRadius = 12 / SCALE;
+    const collisionDistance = ballRadius * 2.05;
+    const collisionDistanceSq = collisionDistance * collisionDistance;
+
+    for (let i = 0; i < this.balls.length; i++) {
+      for (let j = i + 1; j < this.balls.length; j++) {
+        const ballA = this.balls[i];
+        const ballB = this.balls[j];
+        const posA = ballA.body.translation();
+        const posB = ballB.body.translation();
+
+        const dx = posA.x - posB.x;
+        const dz = posA.z - posB.z;
+        const distSq = dx * dx + dz * dz;
+
+        if (distSq > collisionDistanceSq) continue;
+
+        const velA = ballA.body.linvel();
+        const velB = ballB.body.linvel();
+        const relVx = velA.x - velB.x;
+        const relVz = velA.z - velB.z;
+        const relativeSpeed = Math.hypot(relVx, relVz);
+
+        if (relativeSpeed < 0.35) continue;
+
+        const key = `${Math.min(ballA.number, ballB.number)}-${Math.max(ballA.number, ballB.number)}`;
+        const lastHit = this.recentCollisions.get(key) ?? 0;
+        if (now - lastHit < 90) continue;
+
+        this.recentCollisions.set(key, now);
+        this.audio.playBallCollision(relativeSpeed);
+      }
+    }
   }
 
   checkPockets() {
@@ -737,6 +782,7 @@ class PoolGameEngine {
 
     while (this.accumulator >= FIXED_DT) {
       this.world.step();
+      this.detectBallCollisions(currentTime);
       this.checkPockets();
       applyRollingFriction(this.balls, FIXED_DT);
       this.accumulator -= FIXED_DT;
@@ -771,6 +817,7 @@ class PoolGameEngine {
     // Ball-in-hand after scratch
     if (this.pocketedThisShot.cueBall) {
       this.ballInHand = true;
+      this.audio.playFoul();
     }
 
     if (this.mode === 'online') {
