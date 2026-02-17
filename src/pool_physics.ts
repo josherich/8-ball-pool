@@ -20,16 +20,32 @@ export type PocketedEvent = {
   rotation: { w: number; x: number; y: number; z: number };
 };
 
-// Physics properties for realistic pool ball behavior
-export const BALL_MASS = 0.17;        // kg (standard pool ball is ~170g)
-export const BALL_RESTITUTION = 0.92; // Bounciness of ball-to-ball collisions
-export const BALL_FRICTION = 0.1;     // Surface friction between balls
-export const CUSHION_RESTITUTION = 0.75; // Cushion bounce factor
-export const CUSHION_FRICTION = 0.15;    // Cushion surface friction
-export const ROLLING_FRICTION = 0.01;    // Felt resistance (simulated)
-export const LINEAR_DAMPING = 0.3;       // Simulates rolling resistance on felt
-export const ANGULAR_DAMPING = 0.5;      // Simulates rotational friction on felt
-export const MAX_SHOT_POWER = 5;         // Maximum shot power (affects impulse strength)
+// Default physics properties for realistic pool ball behavior
+export const PHYSICS_DEFAULTS = {
+  BALL_MASS: 0.17,            // kg (standard pool ball is ~170g)
+  BALL_RESTITUTION: 0.92,     // Bounciness of ball-to-ball collisions
+  BALL_FRICTION: 0.1,         // Surface friction between balls
+  CUSHION_RESTITUTION: 0.75,  // Cushion bounce factor
+  CUSHION_FRICTION: 0.15,     // Cushion surface friction
+  ROLLING_FRICTION: 0.01,     // Felt resistance (simulated)
+  LINEAR_DAMPING: 0.3,        // Simulates rolling resistance on felt
+  ANGULAR_DAMPING: 0.5,       // Simulates rotational friction on felt
+  MAX_SHOT_POWER: 5,          // Maximum shot power (affects impulse strength)
+} as const;
+
+// Mutable runtime physics config (tunable via debug UI)
+export const physicsConfig = { ...PHYSICS_DEFAULTS };
+
+// Convenience accessors for backward compatibility
+export const BALL_MASS = PHYSICS_DEFAULTS.BALL_MASS;
+export const BALL_RESTITUTION = PHYSICS_DEFAULTS.BALL_RESTITUTION;
+export const BALL_FRICTION = PHYSICS_DEFAULTS.BALL_FRICTION;
+export const CUSHION_RESTITUTION = PHYSICS_DEFAULTS.CUSHION_RESTITUTION;
+export const CUSHION_FRICTION = PHYSICS_DEFAULTS.CUSHION_FRICTION;
+export const ROLLING_FRICTION = PHYSICS_DEFAULTS.ROLLING_FRICTION;
+export const LINEAR_DAMPING = PHYSICS_DEFAULTS.LINEAR_DAMPING;
+export const ANGULAR_DAMPING = PHYSICS_DEFAULTS.ANGULAR_DAMPING;
+export const MAX_SHOT_POWER = PHYSICS_DEFAULTS.MAX_SHOT_POWER;
 
 // Canvas to physics scale (pixels per physics unit)
 export const SCALE = 5;
@@ -92,8 +108,8 @@ export const setupTable = ({
     const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(x, y, z);
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = rapier.ColliderDesc.cuboid(hx, hy, hz)
-      .setRestitution(CUSHION_RESTITUTION)
-      .setFriction(CUSHION_FRICTION);
+      .setRestitution(physicsConfig.CUSHION_RESTITUTION)
+      .setFriction(physicsConfig.CUSHION_FRICTION);
     world.createCollider(colliderDesc, body);
     cushionBodies.push(body);
   };
@@ -227,16 +243,16 @@ export const setupBalls = ({
     // Ball center at Y = physRadius (sitting on table surface at Y=0)
     const bodyDesc = rapier.RigidBodyDesc.dynamic()
       .setTranslation(physX, physRadius, physZ)
-      .setLinearDamping(LINEAR_DAMPING)
-      .setAngularDamping(ANGULAR_DAMPING)
+      .setLinearDamping(physicsConfig.LINEAR_DAMPING)
+      .setAngularDamping(physicsConfig.ANGULAR_DAMPING)
       .setCcdEnabled(true); // Enable CCD for fast-moving balls
 
     const body = world.createRigidBody(bodyDesc);
 
     const colliderDesc = rapier.ColliderDesc.ball(physRadius)
-      .setRestitution(BALL_RESTITUTION)
-      .setFriction(BALL_FRICTION)
-      .setMass(BALL_MASS);
+      .setRestitution(physicsConfig.BALL_RESTITUTION)
+      .setFriction(physicsConfig.BALL_FRICTION)
+      .setMass(physicsConfig.BALL_MASS);
 
     const collider = world.createCollider(colliderDesc, body);
 
@@ -370,16 +386,16 @@ export const checkPockets = ({
         // Create new cue ball
         const bodyDesc = rapier.RigidBodyDesc.dynamic()
           .setTranslation(resetPhysX, physRadius, resetPhysZ)
-          .setLinearDamping(LINEAR_DAMPING)
-          .setAngularDamping(ANGULAR_DAMPING)
+          .setLinearDamping(physicsConfig.LINEAR_DAMPING)
+          .setAngularDamping(physicsConfig.ANGULAR_DAMPING)
           .setCcdEnabled(true);
 
         const newBody = world.createRigidBody(bodyDesc);
 
         const colliderDesc = rapier.ColliderDesc.ball(physRadius)
-          .setRestitution(BALL_RESTITUTION)
-          .setFriction(BALL_FRICTION)
-          .setMass(BALL_MASS);
+          .setRestitution(physicsConfig.BALL_RESTITUTION)
+          .setFriction(physicsConfig.BALL_FRICTION)
+          .setMass(physicsConfig.BALL_MASS);
 
         const newCollider = world.createCollider(colliderDesc, newBody);
 
@@ -408,7 +424,7 @@ export const checkPockets = ({
 };
 
 export const applyRollingFriction = (balls: Ball[], dt: number) => {
-  const frictionCoeff = ROLLING_FRICTION;
+  const frictionCoeff = physicsConfig.ROLLING_FRICTION;
   const pixelRadius = 12;
   const physRadius = pixelRadius / SCALE;
 
@@ -418,8 +434,8 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
 
     if (speed > 0.01) {
       // Apply friction force opposite to velocity
-      const frictionForce = frictionCoeff * BALL_MASS * 9.81; // F = mu * m * g
-      const deceleration = frictionForce / BALL_MASS;
+      const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * 9.81; // F = mu * m * g
+      const deceleration = frictionForce / physicsConfig.BALL_MASS;
 
       // Reduce velocity slightly each step
       const newSpeed = Math.max(0, speed - deceleration * dt);

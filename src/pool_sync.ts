@@ -6,11 +6,7 @@ import {
   type PocketedThisShot,
   type PocketedEvent,
   SCALE,
-  BALL_RESTITUTION,
-  BALL_FRICTION,
-  BALL_MASS,
-  LINEAR_DAMPING,
-  ANGULAR_DAMPING,
+  physicsConfig,
   checkPockets,
   applyRollingFriction
 } from './pool_physics';
@@ -122,8 +118,8 @@ export function restoreBallStates(
   for (const bs of snapshot.balls) {
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(bs.position.x, bs.position.y, bs.position.z)
-      .setLinearDamping(LINEAR_DAMPING)
-      .setAngularDamping(ANGULAR_DAMPING)
+      .setLinearDamping(physicsConfig.LINEAR_DAMPING)
+      .setAngularDamping(physicsConfig.ANGULAR_DAMPING)
       .setCcdEnabled(true);
 
     const body = world.createRigidBody(bodyDesc);
@@ -132,9 +128,9 @@ export function restoreBallStates(
     body.setRotation(bs.rotation, true);
 
     const colliderDesc = RAPIER.ColliderDesc.ball(physRadius)
-      .setRestitution(BALL_RESTITUTION)
-      .setFriction(BALL_FRICTION)
-      .setMass(BALL_MASS);
+      .setRestitution(physicsConfig.BALL_RESTITUTION)
+      .setFriction(physicsConfig.BALL_FRICTION)
+      .setMass(physicsConfig.BALL_MASS);
 
     const collider = world.createCollider(colliderDesc, body);
     newBalls.push({ body, collider, type: bs.type, number: bs.number });

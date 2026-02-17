@@ -1,7 +1,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import SimplePeer from 'simple-peer';
 import {
-  MAX_SHOT_POWER,
+  physicsConfig,
   SCALE,
   FIXED_DT,
   createWorld,
@@ -15,6 +15,7 @@ import {
   type Pocketed,
   type PocketedThisShot
 } from './pool_physics';
+import { createDebugUI, setupTripleSlashToggle, type DebugUI } from './debug_ui';
 import { allBallsStopped, canShoot, evaluateTurnSwitch, evaluateGameOver, isValidBallPlacement } from './pool_rules';
 import {
   type ShotInput,
@@ -68,6 +69,8 @@ class PoolGameEngine {
   lastSnapshot: GameStateSnapshot | null;
   pendingPeerHash: string | null;
   ballInHand: boolean;
+  debugUI: DebugUI | null;
+  cleanupTripleSlash: (() => void) | null;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -107,6 +110,8 @@ class PoolGameEngine {
     this.lastSnapshot = null;
     this.pendingPeerHash = null;
     this.ballInHand = false;
+    this.debugUI = null;
+    this.cleanupTripleSlash = null;
   }
 
   init() {
@@ -123,6 +128,12 @@ class PoolGameEngine {
     this.cushionBodies = cushionBodies;
     this.balls = setupBalls({ canvas: this.canvas, world: this.world, RAPIER: this.RAPIER });
     this.setupEventListeners();
+
+    // Debug UI for tuning physics parameters (toggle with '/' pressed 3 times)
+    this.debugUI = createDebugUI();
+    this.cleanupTripleSlash = setupTripleSlashToggle(() => {
+      this.debugUI?.toggle();
+    });
 
     if (this.mode === 'online' && !this.joinCode) {
       this.setupWebRTC();
@@ -636,7 +647,7 @@ class PoolGameEngine {
     }
 
     if (this.aiming && this.powerIncreasing) {
-      this.power = Math.min(this.power + 0.02, MAX_SHOT_POWER);
+      this.power = Math.min(this.power + 0.02, physicsConfig.MAX_SHOT_POWER);
     }
 
     this.render();
@@ -996,7 +1007,7 @@ class PoolGameEngine {
         const ballPixelY = pos.z * SCALE;
 
         const cueLength = 400;
-        const powerRatio = Math.min(this.power / MAX_SHOT_POWER, 1);
+        const powerRatio = Math.min(this.power / physicsConfig.MAX_SHOT_POWER, 1);
         const cueDistance = this.aiming ? 30 + powerRatio * 50 : 30;
         const startX = ballPixelX - Math.cos(this.aimAngle) * cueDistance;
         const startY = ballPixelY - Math.sin(this.aimAngle) * cueDistance;
@@ -1082,7 +1093,7 @@ class PoolGameEngine {
         const targetBallInfo = this.findTargetBall(ballPixelX, ballPixelY, this.aimAngle, radius);
 
         // Aiming line - always visible when can shoot
-        const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power / MAX_SHOT_POWER, 1) : 0.4;
+        const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power / physicsConfig.MAX_SHOT_POWER, 1) : 0.4;
         ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 5]);
@@ -1146,7 +1157,7 @@ class PoolGameEngine {
       ctx.fillStyle = 'hsl(25, 15%, 15%)';
       ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth, meterHeight);
 
-      const powerRatio = Math.min(this.power / MAX_SHOT_POWER, 1);
+      const powerRatio = Math.min(this.power / physicsConfig.MAX_SHOT_POWER, 1);
       ctx.fillStyle = `hsl(${120 - powerRatio * 120}, 70%, 50%)`;
       ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth * powerRatio, meterHeight);
 
@@ -1525,6 +1536,14 @@ class PoolGameEngine {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+    }
+    if (this.debugUI) {
+      this.debugUI.destroy();
+      this.debugUI = null;
+    }
+    if (this.cleanupTripleSlash) {
+      this.cleanupTripleSlash();
+      this.cleanupTripleSlash = null;
     }
   }
 }
