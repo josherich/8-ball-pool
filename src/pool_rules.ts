@@ -116,6 +116,43 @@ export const evaluateTurnSwitch = ({
   return { playerTypes, currentPlayer, isMyTurn };
 };
 
+export const isValidBallPlacement = ({
+  physX,
+  physZ,
+  ballPositions,
+  tableLeft,
+  tableRight,
+  tableTop,
+  tableBottom,
+  ballRadius
+}: {
+  physX: number;
+  physZ: number;
+  ballPositions: { x: number; z: number }[];
+  tableLeft: number;
+  tableRight: number;
+  tableTop: number;
+  tableBottom: number;
+  ballRadius: number;
+}): boolean => {
+  // Check within table bounds
+  if (physX < tableLeft || physX > tableRight || physZ < tableTop || physZ > tableBottom) {
+    return false;
+  }
+
+  // Check not overlapping any other ball (2 radii + small gap)
+  for (const pos of ballPositions) {
+    const dx = pos.x - physX;
+    const dz = pos.z - physZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < ballRadius * 2.1) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 export type GameOverResult = {
   winner: number;
   reason: string;
