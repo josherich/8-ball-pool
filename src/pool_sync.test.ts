@@ -10,7 +10,7 @@ import {
   type GameMessage
 } from './pool_sync';
 import { createWorld, setupTable, setupBalls } from './pool_physics';
-import { evaluateTurnSwitch } from './pool_rules';
+import { evaluateTurnSwitch, evaluateGameOver } from './pool_rules';
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 700;
@@ -327,6 +327,74 @@ describe('Turn Logic', () => {
     });
     expect(result.currentPlayer).toBe(2);
     expect(result.isMyTurn).toBe(false);
+  });
+});
+
+// --- Game Over Tests ---
+
+describe('Game Over', () => {
+  it('should return null when 8-ball is not pocketed', () => {
+    const result = evaluateGameOver({
+      currentPlayer: 1,
+      playerTypes: { player1: 'solid', player2: 'stripe' },
+      pocketed: { solids: [1, 2, 3], stripes: [], eight: false }
+    });
+    expect(result).toBeNull();
+  });
+
+  it('should declare current player winner when all own balls cleared before 8-ball', () => {
+    const result = evaluateGameOver({
+      currentPlayer: 1,
+      playerTypes: { player1: 'solid', player2: 'stripe' },
+      pocketed: { solids: [1, 2, 3, 4, 5, 6, 7], stripes: [], eight: true }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.winner).toBe(1);
+    expect(result!.reason).toBe('Pocketed 8-ball after clearing all own balls');
+  });
+
+  it('should declare opponent winner when 8-ball pocketed early (solids not cleared)', () => {
+    const result = evaluateGameOver({
+      currentPlayer: 1,
+      playerTypes: { player1: 'solid', player2: 'stripe' },
+      pocketed: { solids: [1, 2, 3], stripes: [], eight: true }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.winner).toBe(2);
+    expect(result!.reason).toBe('Pocketed 8-ball early');
+  });
+
+  it('should declare opponent winner when 8-ball pocketed early (stripes not cleared)', () => {
+    const result = evaluateGameOver({
+      currentPlayer: 2,
+      playerTypes: { player1: 'solid', player2: 'stripe' },
+      pocketed: { solids: [], stripes: [9, 10, 11], eight: true }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.winner).toBe(1);
+    expect(result!.reason).toBe('Pocketed 8-ball early');
+  });
+
+  it('should declare player 2 winner when player 2 clears all stripes then pockets 8-ball', () => {
+    const result = evaluateGameOver({
+      currentPlayer: 2,
+      playerTypes: { player1: 'solid', player2: 'stripe' },
+      pocketed: { solids: [1, 2], stripes: [9, 10, 11, 12, 13, 14, 15], eight: true }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.winner).toBe(2);
+    expect(result!.reason).toBe('Pocketed 8-ball after clearing all own balls');
+  });
+
+  it('should declare opponent winner when types not assigned and 8-ball pocketed', () => {
+    const result = evaluateGameOver({
+      currentPlayer: 1,
+      playerTypes: { player1: null, player2: null },
+      pocketed: { solids: [], stripes: [], eight: true }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.winner).toBe(2);
+    expect(result!.reason).toBe('Pocketed 8-ball early');
   });
 });
 
