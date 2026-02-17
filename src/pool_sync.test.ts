@@ -10,7 +10,7 @@ import {
   type GameMessage
 } from './pool_sync';
 import { createWorld, setupTable, setupBalls } from './pool_physics';
-import { evaluateTurnSwitch, evaluateGameOver } from './pool_rules';
+import { evaluateTurnSwitch, evaluateGameOver, isValidBallPlacement } from './pool_rules';
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 700;
@@ -475,5 +475,199 @@ describe('Message Protocol', () => {
       expect(roundtripped.winner).toBe(1);
       expect(roundtripped.reason).toBe('Pocketed 8-ball after clearing all own balls');
     }
+  });
+
+  it('should roundtrip ball_in_hand_place message through JSON', () => {
+    const msg: GameMessage = {
+      type: 'ball_in_hand_place',
+      position: { x: 60.5, z: 70.2 }
+    };
+    const roundtripped = JSON.parse(JSON.stringify(msg)) as GameMessage;
+    expect(roundtripped.type).toBe('ball_in_hand_place');
+    if (roundtripped.type === 'ball_in_hand_place') {
+      expect(roundtripped.position.x).toBeCloseTo(60.5);
+      expect(roundtripped.position.z).toBeCloseTo(70.2);
+    }
+  });
+});
+
+// --- Ball in Hand Placement Validation Tests ---
+
+describe('Ball in Hand Placement', () => {
+  // Table bounds in physics units (derived from 1200x700 canvas, cushionInset=40, ballRadius=12, SCALE=5)
+  const tableBounds = {
+    tableLeft: (40 + 12) / 5,    // 10.4
+    tableRight: (1200 - 40 - 12) / 5,  // 229.6
+    tableTop: (40 + 12) / 5,     // 10.4
+    tableBottom: (700 - 40 - 12) / 5,   // 129.6
+    ballRadius: 12 / 5            // 2.4
+  };
+
+  it('should accept valid placement with no nearby balls', () => {
+    const result = isValidBallPlacement({
+      physX: 60,
+      physZ: 70,
+      ballPositions: [],
+      ...tableBounds
+    });
+    expect(result).toBe(true);
+  });
+
+  it('should accept placement far from other balls', () => {
+    const result = isValidBallPlacement({
+      physX: 60,
+      physZ: 70,
+      ballPositions: [
+        { x: 180, z: 70 },  // far away
+        { x: 100, z: 100 }  // also far away
+      ],
+      ...tableBounds
+    });
+    expect(result).toBe(true);
+  });
+
+  it('should reject placement outside table bounds (left)', () => {
+    const result = isValidBallPlacement({
+      physX: 5,  // too far left (< 10.4)
+      physZ: 70,
+      ballPositions: [],
+      ...tableBounds
+    });
+    expect(result).toBe(false);
+  });
+
+  it('should reject placement outside table bounds (right)', () => {
+    const result = isValidBallPlacement({
+      physX: 235,  // too far right (> 229.6)
+      physZ: 70,
+      ballPositions: [],
+      ...tableBounds
+    });
+    expect(result).toBe(false);
+  });
+
+  it('should reject placement outside table bounds (top)', () => {
+    const result = isValidBallPlacement({
+      physX: 60,
+      physZ: 5,  // too far up (< 10.4)
+      ballPositions: [],
+      ...tableBounds
+    });
+    expect(result).toBe(false);
+  });
+
+  it('should reject placement outside table bounds (bottom)', () => {
+    const result = isValidBallPlacement({
+      physX: 60,
+      physZ: 135,  // too far down (> 129.6)
+      ballPositions: [],
+      ...tableBounds
+    });
+    expect(result).toBe(false);
+  });
+
+  it('should reject placement overlapping another ball', () => {
+    const result = isValidBallPlacement({
+      physX: 60,
+      physZ: 70,
+      ballPositions: [
+        { x: 62, z: 70 }  // only 2 units away, less than 2 * 2.4 * 1.05 = 5.04
+      ],
+      ...tableBounds
+    });
+    expect(result).toBe(false);
+  });
+
+  it('should accept placement just outside overlap range', () => {
+    // ballRadius * 2.1 = 2.4 * 2.1 = 5.04
+    // Place ball at distance 6 from another ball (> 5.04)
+    const result = isValidBallPlacement({
+      physX: 66,
+      physZ: 70,
+      ballPositions: [
+        { x: 60, z: 70 }  // 6 units away, greater than 5.04
+      ],
+      ...tableBounds
+    });
+    expect(result).toBe(true);
+  });
+
+  it('should reject when overlapping any one of multiple balls', () => {
+    const result = isValidBallPlacement({
+      physX: 60,
+      physZ: 70,
+      ballPositions: [
+        { x: 100, z: 70 },  // far away - OK
+        { x: 61, z: 70 }    // too close - overlap
+      ],
+      ...tableBounds
+    });
+    expect(result).toBe(false);
+  });
+
+  it('should work with physics world ball positions', () => {
+    const { world, balls } = createFreshWorld();
+
+    // Extract non-cue ball positions from the physics world
+    const ballPositions = balls
+      .filter(b => b.type !== 'cue')
+      .map(b => {
+        const pos = b.body.translation();
+        return { x: pos.x, z: pos.z };
+      });
+
+    // Place at cue ball's default position (should be far from rack)
+    const cueBall = balls.find(b => b.type === 'cue')!;
+    const cuePos = cueBall.body.translation();
+    const result = isValidBallPlacement({
+      physX: cuePos.x,
+      physZ: cuePos.z,
+      ballPositions,
+      ...tableBounds
+    });
+    expect(result).toBe(true);
+
+    // Place directly on top of a racked ball (should fail)
+    const firstBall = balls.find(b => b.type !== 'cue')!;
+    const firstPos = firstBall.body.translation();
+    const resultOverlap = isValidBallPlacement({
+      physX: firstPos.x,
+      physZ: firstPos.z,
+      ballPositions,
+      ...tableBounds
+    });
+    expect(resultOverlap).toBe(false);
+
+    world.free();
+  });
+});
+
+// --- Ball in Hand Turn Integration Tests ---
+
+describe('Ball in Hand Turn Logic', () => {
+  it('should indicate scratch occurred when cue ball is pocketed', () => {
+    const pocketedThisShot = { solids: [], stripes: [], cueBall: true };
+    const result = evaluateTurnSwitch({
+      currentPlayer: 1,
+      mode: 'local',
+      isMyTurn: true,
+      playerTypes: { player1: 'solid', player2: 'stripe' },
+      pocketedThisShot
+    });
+    // Turn should switch and cueBall flag should remain true
+    expect(result.currentPlayer).toBe(2);
+    expect(pocketedThisShot.cueBall).toBe(true);
+  });
+
+  it('should indicate no scratch when cue ball is not pocketed', () => {
+    const pocketedThisShot = { solids: [3], stripes: [], cueBall: false };
+    evaluateTurnSwitch({
+      currentPlayer: 1,
+      mode: 'local',
+      isMyTurn: true,
+      playerTypes: { player1: 'solid', player2: 'stripe' },
+      pocketedThisShot
+    });
+    expect(pocketedThisShot.cueBall).toBe(false);
   });
 });

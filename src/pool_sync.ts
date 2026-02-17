@@ -49,7 +49,8 @@ export type GameMessage =
   | { type: 'state_hash'; hash: string }
   | { type: 'state_sync'; snapshot: GameStateSnapshot }
   | { type: 'turn'; state: TurnState }
-  | { type: 'game_over'; winner: number; reason: string };
+  | { type: 'game_over'; winner: number; reason: string }
+  | { type: 'ball_in_hand_place'; position: { x: number; z: number } };
 
 // --- Constants ---
 

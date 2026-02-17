@@ -15,7 +15,7 @@ import {
   type Pocketed,
   type PocketedThisShot
 } from './pool_physics';
-import { allBallsStopped, canShoot, evaluateTurnSwitch, evaluateGameOver } from './pool_rules';
+import { allBallsStopped, canShoot, evaluateTurnSwitch, evaluateGameOver, isValidBallPlacement } from './pool_rules';
 import {
   type ShotInput,
   type GameMessage,
@@ -67,6 +67,7 @@ class PoolGameEngine {
   lastHash: string | null;
   lastSnapshot: GameStateSnapshot | null;
   pendingPeerHash: string | null;
+  ballInHand: boolean;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -105,6 +106,7 @@ class PoolGameEngine {
     this.lastHash = null;
     this.lastSnapshot = null;
     this.pendingPeerHash = null;
+    this.ballInHand = false;
   }
 
   init() {
@@ -320,6 +322,18 @@ class PoolGameEngine {
       case 'game_over':
         this.callbacks.onGameOver?.({ winner: message.winner, reason: message.reason });
         break;
+
+      case 'ball_in_hand_place': {
+        const cueBall = this.balls.find(b => b.type === 'cue');
+        if (cueBall) {
+          const physRadius = 12 / SCALE;
+          cueBall.body.setTranslation({ x: message.position.x, y: physRadius, z: message.position.z }, true);
+          cueBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+          cueBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        }
+        this.ballInHand = false;
+        break;
+      }
     }
   }
 
@@ -369,6 +383,10 @@ class PoolGameEngine {
     });
 
     this.canvas.addEventListener('mousedown', () => {
+      if (this.ballInHand) {
+        this.placeBallInHand();
+        return;
+      }
       if (this.canShoot()) {
         this.aiming = true;
         this.power = 0;
@@ -400,11 +418,64 @@ class PoolGameEngine {
   }
 
   canShoot(): boolean {
+    if (this.ballInHand) return false;
     return canShoot({
       mode: this.mode,
       isMyTurn: this.isMyTurn,
       balls: this.balls
     });
+  }
+
+  getTableBounds() {
+    const cushionInset = 40;
+    const ballRadius = 12;
+    const physBallRadius = ballRadius / SCALE;
+    const physCushionInset = cushionInset / SCALE;
+    return {
+      tableLeft: physCushionInset + physBallRadius,
+      tableRight: this.canvas.width / SCALE - physCushionInset - physBallRadius,
+      tableTop: physCushionInset + physBallRadius,
+      tableBottom: this.canvas.height / SCALE - physCushionInset - physBallRadius,
+      ballRadius: physBallRadius
+    };
+  }
+
+  placeBallInHand() {
+    if (!this.ballInHand) return;
+    // In online mode, only the current player can place
+    if (this.mode === 'online' && !this.isMyTurn) return;
+
+    const physX = this.mousePos.x / SCALE;
+    const physZ = this.mousePos.y / SCALE;
+    const bounds = this.getTableBounds();
+
+    const ballPositions = this.balls
+      .filter(b => b.type !== 'cue')
+      .map(b => {
+        const pos = b.body.translation();
+        return { x: pos.x, z: pos.z };
+      });
+
+    if (!isValidBallPlacement({
+      physX,
+      physZ,
+      ballPositions,
+      ...bounds
+    })) {
+      return;
+    }
+
+    const cueBall = this.balls.find(b => b.type === 'cue');
+    if (!cueBall) return;
+
+    cueBall.body.setTranslation({ x: physX, y: bounds.ballRadius, z: physZ }, true);
+    cueBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    cueBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.ballInHand = false;
+
+    if (this.mode === 'online') {
+      this.sendGameMessage({ type: 'ball_in_hand_place', position: { x: physX, z: physZ } });
+    }
   }
 
   shoot() {
@@ -584,6 +655,11 @@ class PoolGameEngine {
     this.currentPlayer = result.currentPlayer;
     this.isMyTurn = result.isMyTurn;
     this.shotInProgress = false;
+
+    // Ball-in-hand after scratch
+    if (this.pocketedThisShot.cueBall) {
+      this.ballInHand = true;
+    }
 
     if (this.mode === 'online') {
       const snapshot: GameStateSnapshot = {
@@ -767,6 +843,9 @@ class PoolGameEngine {
 
     // Ball shadows (drawn first, below all balls)
     this.balls.forEach(ball => {
+      // Skip cue ball shadow during ball-in-hand
+      if (this.ballInHand && ball.type === 'cue') return;
+
       const pos = ball.body.translation();
       const pixelX = pos.x * SCALE;
       const pixelY = pos.z * SCALE;
@@ -792,6 +871,9 @@ class PoolGameEngine {
 
     // Balls
     this.balls.forEach(ball => {
+      // Skip cue ball during ball-in-hand (rendered as ghost at mouse)
+      if (this.ballInHand && ball.type === 'cue') return;
+
       const pos = ball.body.translation();
       const rot = ball.body.rotation(); // Quaternion
 
@@ -841,6 +923,68 @@ class PoolGameEngine {
 
         return true;
       });
+    }
+
+    // Ball-in-hand ghost rendering
+    if (this.ballInHand) {
+      const canPlace = this.mode !== 'online' || this.isMyTurn;
+      if (canPlace) {
+        const ghostX = this.mousePos.x;
+        const ghostY = this.mousePos.y;
+        const physX = ghostX / SCALE;
+        const physZ = ghostY / SCALE;
+        const bounds = this.getTableBounds();
+
+        const ballPositions = this.balls
+          .filter(b => b.type !== 'cue')
+          .map(b => {
+            const pos = b.body.translation();
+            return { x: pos.x, z: pos.z };
+          });
+
+        const valid = isValidBallPlacement({
+          physX, physZ, ballPositions, ...bounds
+        });
+
+        // Ghost shadow
+        ctx.save();
+        ctx.globalAlpha = 0.4;
+        ctx.translate(ghostX + 3, ghostY + 4);
+        ctx.scale(1, 0.6);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.beginPath();
+        ctx.arc(0, 0, radius * 1.1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Ghost cue ball
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(ghostX, ghostY, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Validity indicator ring
+        ctx.strokeStyle = valid ? 'rgba(50, 205, 50, 0.8)' : 'rgba(220, 50, 50, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ghostX, ghostY, radius + 3, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Instructional text
+        ctx.fillStyle = valid ? 'hsl(120, 60%, 60%)' : 'hsl(0, 60%, 60%)';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Ball in Hand - Click to place', w / 2, h - 30);
+      } else {
+        // Waiting for opponent to place
+        ctx.fillStyle = 'hsl(45, 80%, 65%)';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Opponent placing cue ball...', w / 2, h - 30);
+      }
     }
 
     // Cue stick
@@ -1015,11 +1159,18 @@ class PoolGameEngine {
     this.renderBallDisplay(ctx, w, h);
 
     // Current turn indicator
-    const turnText = this.mode === 'online'
-      ? (this.isMyTurn ? 'Your Turn' : 'Opponent\'s Turn')
-      : `Player ${this.currentPlayer}'s Turn`;
+    let turnText: string;
+    if (this.ballInHand) {
+      turnText = this.mode === 'online'
+        ? (this.isMyTurn ? 'Your Turn - Ball in Hand' : 'Opponent\'s Turn - Ball in Hand')
+        : `Player ${this.currentPlayer}'s Turn - Ball in Hand`;
+    } else {
+      turnText = this.mode === 'online'
+        ? (this.isMyTurn ? 'Your Turn' : 'Opponent\'s Turn')
+        : `Player ${this.currentPlayer}'s Turn`;
+    }
 
-    ctx.fillStyle = this.canShoot() ? 'hsl(145, 50%, 50%)' : 'hsl(25, 50%, 50%)';
+    ctx.fillStyle = this.ballInHand ? 'hsl(45, 80%, 65%)' : (this.canShoot() ? 'hsl(145, 50%, 50%)' : 'hsl(25, 50%, 50%)');
     ctx.font = 'bold 20px Arial';
     ctx.textAlign = 'center';
     ctx.fillText(turnText, w / 2 - 120, 30);
