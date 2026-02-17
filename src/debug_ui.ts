@@ -87,8 +87,8 @@ export function createDebugUI(): DebugUI {
   // Create sliders for each parameter
   for (const param of PARAMS) {
     const defaultVal = PHYSICS_DEFAULTS[param.key];
-    const min = defaultVal * 0.5;
-    const max = defaultVal * 1.5;
+    const min = defaultVal * 0.2;
+    const max = defaultVal * 5.5;
 
     const row = document.createElement('div');
     row.style.cssText = 'margin-bottom: 8px;';
