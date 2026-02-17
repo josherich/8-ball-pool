@@ -73,6 +73,7 @@ class PoolGameEngine {
   cleanupTripleSlash: (() => void) | null;
   cueSpinOffset: { x: number; y: number };
   draggingCueSpin: boolean;
+  cueControlExpanded: boolean;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -116,6 +117,7 @@ class PoolGameEngine {
     this.cleanupTripleSlash = null;
     this.cueSpinOffset = { x: 0, y: 0 };
     this.draggingCueSpin = false;
+    this.cueControlExpanded = false;
   }
 
   init() {
@@ -376,7 +378,7 @@ class PoolGameEngine {
       this.mousePos.y = e.clientY - rect.top;
 
       if (this.draggingCueSpin) {
-        this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y);
+        this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
         return;
       }
 
@@ -403,9 +405,19 @@ class PoolGameEngine {
     });
 
     this.canvas.addEventListener('mousedown', () => {
-      if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y)) {
-        this.draggingCueSpin = true;
-        this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y);
+      if (this.cueControlExpanded) {
+        if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, true)) {
+          this.draggingCueSpin = true;
+          this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
+          return;
+        }
+
+        this.cueControlExpanded = false;
+        return;
+      }
+
+      if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, false)) {
+        this.cueControlExpanded = true;
         return;
       }
 
@@ -438,20 +450,29 @@ class PoolGameEngine {
     });
   }
 
-  getCueSpinControlLayout() {
-    const radius = 50;
-    const centerX = this.canvas.width - 80;
-    const centerY = 88;
-    return { centerX, centerY, radius };
+  getCueSpinControlLayout(expanded: boolean) {
+    if (expanded) {
+      return {
+        centerX: this.canvas.width - 80,
+        centerY: 88,
+        radius: 50
+      };
+    }
+
+    return {
+      centerX: this.canvas.width - 38,
+      centerY: 38,
+      radius: 14
+    };
   }
 
-  isWithinCueSpinControl(x: number, y: number): boolean {
-    const { centerX, centerY, radius } = this.getCueSpinControlLayout();
+  isWithinCueSpinControl(x: number, y: number, expanded: boolean): boolean {
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(expanded);
     return Math.hypot(x - centerX, y - centerY) <= radius;
   }
 
-  updateCueSpinOffset(x: number, y: number) {
-    const { centerX, centerY, radius } = this.getCueSpinControlLayout();
+  updateCueSpinOffset(x: number, y: number, expanded: boolean) {
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(expanded);
     const relX = x - centerX;
     const relY = y - centerY;
     const dist = Math.hypot(relX, relY);
@@ -561,6 +582,8 @@ class PoolGameEngine {
     }
 
     this.applyShot(input);
+    this.cueSpinOffset = { x: 0, y: 0 };
+    this.cueControlExpanded = false;
   }
 
   applyShot(input: ShotInput) {
@@ -1268,7 +1291,12 @@ class PoolGameEngine {
   }
 
   renderCueSpinControl(ctx: CanvasRenderingContext2D) {
-    const { centerX, centerY, radius } = this.getCueSpinControlLayout();
+    if (!this.cueControlExpanded) {
+      this.renderMiniCueSpinControl(ctx);
+      return;
+    }
+
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(true);
 
     ctx.save();
     ctx.fillStyle = 'rgba(12, 12, 12, 0.55)';
@@ -1313,6 +1341,38 @@ class PoolGameEngine {
     ctx.fillText('Back', centerX, centerY + radius + 15);
     ctx.fillText('Left', centerX - radius - 20, centerY + 4);
     ctx.fillText('Right', centerX + radius + 23, centerY + 4);
+    ctx.restore();
+  }
+
+  renderMiniCueSpinControl(ctx: CanvasRenderingContext2D) {
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(false);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(12, 12, 12, 0.45)';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius + 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#f3f4f6';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(centerX - radius, centerY);
+    ctx.lineTo(centerX + radius, centerY);
+    ctx.moveTo(centerX, centerY - radius);
+    ctx.lineTo(centerX, centerY + radius);
+    ctx.stroke();
+
+    const dotX = centerX + this.cueSpinOffset.x * radius;
+    const dotY = centerY + this.cueSpinOffset.y * radius;
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
