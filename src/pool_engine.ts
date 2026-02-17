@@ -71,6 +71,9 @@ class PoolGameEngine {
   ballInHand: boolean;
   debugUI: DebugUI | null;
   cleanupTripleSlash: (() => void) | null;
+  cueSpinOffset: { x: number; y: number };
+  draggingCueSpin: boolean;
+  cueControlExpanded: boolean;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -112,6 +115,9 @@ class PoolGameEngine {
     this.ballInHand = false;
     this.debugUI = null;
     this.cleanupTripleSlash = null;
+    this.cueSpinOffset = { x: 0, y: 0 };
+    this.draggingCueSpin = false;
+    this.cueControlExpanded = false;
   }
 
   init() {
@@ -371,6 +377,11 @@ class PoolGameEngine {
       this.mousePos.x = e.clientX - rect.left;
       this.mousePos.y = e.clientY - rect.top;
 
+      if (this.draggingCueSpin) {
+        this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
+        return;
+      }
+
       if (this.canShoot() && !this.aiming) {
         const cueBall = this.balls.find(b => b.type === 'cue');
         if (cueBall) {
@@ -394,6 +405,22 @@ class PoolGameEngine {
     });
 
     this.canvas.addEventListener('mousedown', () => {
+      if (this.cueControlExpanded) {
+        if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, true)) {
+          this.draggingCueSpin = true;
+          this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
+          return;
+        }
+
+        this.cueControlExpanded = false;
+        return;
+      }
+
+      if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, false)) {
+        this.cueControlExpanded = true;
+        return;
+      }
+
       if (this.ballInHand) {
         this.placeBallInHand();
         return;
@@ -406,12 +433,62 @@ class PoolGameEngine {
     });
 
     this.canvas.addEventListener('mouseup', () => {
+      if (this.draggingCueSpin) {
+        this.draggingCueSpin = false;
+        return;
+      }
+
       if (this.aiming && this.canShoot()) {
         this.shoot();
         this.aiming = false;
         this.powerIncreasing = false;
       }
     });
+
+    this.canvas.addEventListener('mouseleave', () => {
+      this.draggingCueSpin = false;
+    });
+  }
+
+  getCueSpinControlLayout(expanded: boolean) {
+    if (expanded) {
+      return {
+        centerX: this.canvas.width - 80,
+        centerY: 88,
+        radius: 50
+      };
+    }
+
+    return {
+      centerX: this.canvas.width - 20,
+      centerY: this.canvas.height / 2 - 20,
+      radius: 14
+    };
+  }
+
+  isWithinCueSpinControl(x: number, y: number, expanded: boolean): boolean {
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(expanded);
+    return Math.hypot(x - centerX, y - centerY) <= radius;
+  }
+
+  updateCueSpinOffset(x: number, y: number, expanded: boolean) {
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(expanded);
+    const relX = x - centerX;
+    const relY = y - centerY;
+    const dist = Math.hypot(relX, relY);
+
+    if (dist <= radius) {
+      this.cueSpinOffset = {
+        x: relX / radius,
+        y: relY / radius
+      };
+      return;
+    }
+
+    this.cueSpinOffset = {
+      x: relX / dist,
+      y: relY / dist
+    };
   }
 
   getAimSmoothing(distance: number): number {
@@ -496,7 +573,8 @@ class PoolGameEngine {
     const input: ShotInput = {
       angle: this.aimAngle,
       power: this.power,
-      spinFactor: 0.3
+      topspin: -this.cueSpinOffset.y * 0.5,
+      sidespin: this.cueSpinOffset.x * 0.5
     };
 
     if (this.mode === 'online') {
@@ -504,6 +582,8 @@ class PoolGameEngine {
     }
 
     this.applyShot(input);
+    this.cueSpinOffset = { x: 0, y: 0 };
+    this.cueControlExpanded = false;
   }
 
   applyShot(input: ShotInput) {
@@ -520,9 +600,9 @@ class PoolGameEngine {
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
 
     cueBall.body.applyTorqueImpulse({
-      x: -impulseZ * input.spinFactor,
-      y: 0,
-      z: impulseX * input.spinFactor
+      x: -impulseZ * input.topspin,
+      y: impulseStrength * input.sidespin,
+      z: impulseX * input.topspin
     }, true);
 
     this.gameStarted = true;
@@ -1206,6 +1286,94 @@ class PoolGameEngine {
     ctx.font = 'bold 20px Arial';
     ctx.textAlign = 'center';
     ctx.fillText(turnText, w / 2 - 120, 30);
+
+    this.renderCueSpinControl(ctx);
+  }
+
+  renderCueSpinControl(ctx: CanvasRenderingContext2D) {
+    if (!this.cueControlExpanded) {
+      this.renderMiniCueSpinControl(ctx);
+      return;
+    }
+
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(true);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(12, 12, 12, 0.55)';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius + 16, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#f3f4f6';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(centerX - radius, centerY);
+    ctx.lineTo(centerX + radius, centerY);
+    ctx.moveTo(centerX, centerY - radius);
+    ctx.lineTo(centerX, centerY + radius);
+    ctx.stroke();
+
+    const dotX = centerX + this.cueSpinOffset.x * radius;
+    const dotY = centerY + this.cueSpinOffset.y * radius;
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(dotX - 2, dotY - 2, 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#f9fafb';
+    ctx.font = 'bold 12px Arial';
+    ctx.fillText('Cue Ball Control', centerX, centerY - radius - 20);
+    ctx.font = '11px Arial';
+    ctx.fillStyle = 'rgba(249, 250, 251, 0.9)';
+    ctx.fillText('Top', centerX, centerY - radius - 6);
+    ctx.fillText('Back', centerX, centerY + radius + 15);
+    ctx.fillText('Left', centerX - radius - 20, centerY + 4);
+    ctx.fillText('Right', centerX + radius + 23, centerY + 4);
+    ctx.restore();
+  }
+
+  renderMiniCueSpinControl(ctx: CanvasRenderingContext2D) {
+    const { centerX, centerY, radius } = this.getCueSpinControlLayout(false);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(12, 12, 12, 0.45)';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius + 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#f3f4f6';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(centerX - radius, centerY);
+    ctx.lineTo(centerX + radius, centerY);
+    ctx.moveTo(centerX, centerY - radius);
+    ctx.lineTo(centerX, centerY + radius);
+    ctx.stroke();
+
+    const dotX = centerX + this.cueSpinOffset.x * radius;
+    const dotY = centerY + this.cueSpinOffset.y * radius;
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // Render the ball display showing solids on left, 8-ball in center, stripes on right

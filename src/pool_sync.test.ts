@@ -43,7 +43,7 @@ beforeAll(async () => {
 
 describe('Deterministic Physics', () => {
   it('should produce identical results for the same shot input (sequential worlds)', () => {
-    const input: ShotInput = { angle: 0.1, power: 3.0, spinFactor: 0.3 };
+    const input: ShotInput = { angle: 0.1, power: 3.0, topspin: 0.3, sidespin: 0 };
 
     // Run 1: create world, simulate, capture result, free world
     const { world: world1, balls: balls1, pockets: pockets1, pocketed: pocketed1 } = createFreshWorld();
@@ -72,7 +72,7 @@ describe('Deterministic Physics', () => {
   });
 
   it('should produce identical results for an angled break shot', () => {
-    const input: ShotInput = { angle: 0.15, power: 4.5, spinFactor: 0.3 };
+    const input: ShotInput = { angle: 0.15, power: 4.5, topspin: 0.3, sidespin: 0 };
 
     const { world: world1, balls: balls1, pockets: pockets1, pocketed: pocketed1 } = createFreshWorld();
     const result1 = simulateShot(world1, balls1, pockets1, pocketed1, input, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
@@ -89,8 +89,8 @@ describe('Deterministic Physics', () => {
   });
 
   it('should produce different results for different shot inputs', () => {
-    const input1: ShotInput = { angle: 0, power: 3.0, spinFactor: 0.3 };
-    const input2: ShotInput = { angle: 0.5, power: 3.0, spinFactor: 0.3 };
+    const input1: ShotInput = { angle: 0, power: 3.0, topspin: 0.3, sidespin: 0 };
+    const input2: ShotInput = { angle: 0.5, power: 3.0, topspin: 0.3, sidespin: 0 };
 
     const { world: world1, balls: balls1, pockets: pockets1, pocketed: pocketed1 } = createFreshWorld();
     const result1 = simulateShot(world1, balls1, pockets1, pocketed1, input1, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
@@ -105,7 +105,7 @@ describe('Deterministic Physics', () => {
   });
 
   it('should eventually settle (all balls stop)', () => {
-    const input: ShotInput = { angle: 0, power: 5.0, spinFactor: 0.3 };
+    const input: ShotInput = { angle: 0, power: 5.0, topspin: 0.3, sidespin: 0 };
 
     const { world, balls, pockets, pocketed } = createFreshWorld();
     const result = simulateShot(world, balls, pockets, pocketed, input, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
@@ -404,14 +404,15 @@ describe('Message Protocol', () => {
   it('should roundtrip shot message through JSON', () => {
     const msg: GameMessage = {
       type: 'shot',
-      input: { angle: 1.234, power: 3.5, spinFactor: 0.3 }
+      input: { angle: 1.234, power: 3.5, topspin: 0.3, sidespin: 0 }
     };
     const roundtripped = JSON.parse(JSON.stringify(msg)) as GameMessage;
     expect(roundtripped.type).toBe('shot');
     if (roundtripped.type === 'shot') {
       expect(roundtripped.input.angle).toBeCloseTo(1.234);
       expect(roundtripped.input.power).toBeCloseTo(3.5);
-      expect(roundtripped.input.spinFactor).toBeCloseTo(0.3);
+      expect(roundtripped.input.topspin).toBeCloseTo(0.3);
+      expect(roundtripped.input.sidespin).toBeCloseTo(0);
     }
   });
 

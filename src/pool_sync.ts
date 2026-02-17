@@ -17,7 +17,8 @@ import { allBallsStopped } from './pool_rules';
 export type ShotInput = {
   angle: number;
   power: number;
-  spinFactor: number;
+  topspin: number;
+  sidespin: number;
 };
 
 export type BallState = {
@@ -170,9 +171,9 @@ export function simulateShot(
 
   cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
   cueBall.body.applyTorqueImpulse({
-    x: -impulseZ * input.spinFactor,
-    y: 0,
-    z: impulseX * input.spinFactor
+    x: -impulseZ * input.topspin,
+    y: impulseStrength * input.sidespin,
+    z: impulseX * input.topspin
   }, true);
 
   const allPocketedEvents: PocketedEvent[] = [];
