@@ -1,4 +1,4 @@
-import type { Ball, PocketedThisShot } from './pool_physics';
+import type { Ball, Pocketed, PocketedThisShot } from './pool_physics';
 
 export const allBallsStopped = (balls: Ball[]): boolean =>
   balls.every(ball => {
@@ -114,4 +114,43 @@ export const evaluateTurnSwitch = ({
 
   // If they pocketed their own ball type, they keep their turn
   return { playerTypes, currentPlayer, isMyTurn };
+};
+
+export type GameOverResult = {
+  winner: number;
+  reason: string;
+} | null;
+
+export const evaluateGameOver = ({
+  currentPlayer,
+  playerTypes,
+  pocketed
+}: {
+  currentPlayer: number;
+  playerTypes: { player1: string | null; player2: string | null };
+  pocketed: Pocketed;
+}): GameOverResult => {
+  if (!pocketed.eight) return null;
+
+  const currentType = currentPlayer === 1
+    ? playerTypes.player1
+    : playerTypes.player2;
+
+  const allOwnPocketed = currentType === 'solid'
+    ? pocketed.solids.length === 7
+    : currentType === 'stripe'
+      ? pocketed.stripes.length === 7
+      : false;
+
+  if (allOwnPocketed) {
+    return {
+      winner: currentPlayer,
+      reason: 'Pocketed 8-ball after clearing all own balls'
+    };
+  }
+
+  return {
+    winner: currentPlayer === 1 ? 2 : 1,
+    reason: 'Pocketed 8-ball early'
+  };
 };

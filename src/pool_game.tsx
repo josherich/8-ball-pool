@@ -11,6 +11,7 @@ const PoolGame = () => {
   const [inputCode, setInputCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [rapierLoaded, setRapierLoaded] = useState(false);
+  const [gameOver, setGameOver] = useState<{ winner: number; reason: string } | null>(null);
   const gameRef = useRef<PoolGameEngine | null>(null);
   const joinCodeRef = useRef<string | null>(null);
 
@@ -27,7 +28,8 @@ const PoolGame = () => {
     gameRef.current = new PoolGameEngine(canvasRef.current, gameMode, RAPIER, {
       onConnectionStateChange: setConnectionState,
       onRoomCodeGenerated: setRoomCode,
-      joinCode: joinCodeRef.current
+      joinCode: joinCodeRef.current,
+      onGameOver: setGameOver
     });
     gameRef.current.init();
 
@@ -48,6 +50,29 @@ const PoolGame = () => {
     joinCodeRef.current = inputCode.trim();
     setGameMode('online');
     setConnectionState('joining');
+  };
+
+  const handlePlayAgain = () => {
+    setGameOver(null);
+    // Re-trigger the game engine by toggling gameMode
+    const currentMode = gameMode;
+    setGameMode(null);
+    joinCodeRef.current = null;
+    setTimeout(() => {
+      setGameMode(currentMode);
+      if (currentMode === 'online') {
+        setConnectionState('hosting');
+      }
+    }, 0);
+  };
+
+  const handleBackToMenu = () => {
+    setGameOver(null);
+    setGameMode(null);
+    setConnectionState('idle');
+    setRoomCode('');
+    setInputCode('');
+    joinCodeRef.current = null;
   };
 
   const copyRoomCode = () => {
@@ -227,16 +252,99 @@ const PoolGame = () => {
         </div>
       )}
 
-      <canvas
-        ref={canvasRef}
-        width={1200}
-        height={700}
-        style={{
-          borderRadius: '0.5rem',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-          border: '8px solid hsl(25, 35%, 25%)'
-        }}
-      />
+      <div style={{ position: 'relative' }}>
+        <canvas
+          ref={canvasRef}
+          width={1200}
+          height={700}
+          style={{
+            borderRadius: '0.5rem',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            border: '8px solid hsl(25, 35%, 25%)',
+            display: 'block'
+          }}
+        />
+
+        {gameOver && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0, 0, 0, 0.75)',
+            borderRadius: '0.5rem'
+          }}>
+            <div style={{ textAlign: 'center' }}>
+              <h2 style={{
+                fontSize: '3rem',
+                fontWeight: 'bold',
+                color: 'hsl(45, 80%, 65%)',
+                marginBottom: '0.5rem'
+              }}>
+                Game Over
+              </h2>
+              <p style={{
+                fontSize: '1.5rem',
+                color: 'white',
+                marginBottom: '0.5rem'
+              }}>
+                {gameMode === 'online'
+                  ? (gameOver.winner === (gameRef.current?.isHost ? 1 : 2)
+                    ? 'You Win!'
+                    : 'You Lose!')
+                  : `Player ${gameOver.winner} Wins!`}
+              </p>
+              <p style={{
+                fontSize: '1rem',
+                color: '#9ca3af',
+                marginBottom: '2rem'
+              }}>
+                {gameOver.reason}
+              </p>
+              <div style={{
+                display: 'flex',
+                gap: '1rem',
+                justifyContent: 'center'
+              }}>
+                <button
+                  onClick={handlePlayAgain}
+                  style={{
+                    padding: '0.75rem 2rem',
+                    borderRadius: '0.5rem',
+                    fontWeight: '600',
+                    fontSize: '1.125rem',
+                    background: 'hsl(145, 50%, 28%)',
+                    color: 'white',
+                    cursor: 'pointer',
+                    border: 'none'
+                  }}
+                >
+                  Play Again
+                </button>
+                <button
+                  onClick={handleBackToMenu}
+                  style={{
+                    padding: '0.75rem 2rem',
+                    borderRadius: '0.5rem',
+                    fontWeight: '600',
+                    fontSize: '1.125rem',
+                    background: 'hsl(25, 45%, 35%)',
+                    color: 'white',
+                    cursor: 'pointer',
+                    border: 'none'
+                  }}
+                >
+                  Main Menu
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div style={{
         marginTop: '1rem',

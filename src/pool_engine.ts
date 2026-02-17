@@ -15,7 +15,7 @@ import {
   type Pocketed,
   type PocketedThisShot
 } from './pool_physics';
-import { allBallsStopped, canShoot, evaluateTurnSwitch } from './pool_rules';
+import { allBallsStopped, canShoot, evaluateTurnSwitch, evaluateGameOver } from './pool_rules';
 import {
   type ShotInput,
   type GameMessage,
@@ -617,30 +617,28 @@ class PoolGameEngine {
         this.handleStateHashComparison(this.pendingPeerHash);
         this.pendingPeerHash = null;
       }
+    }
 
-      if (this.pocketed.eight) {
-        this.handleGameOver();
+    // Check for game over in all modes
+    const gameOverResult = evaluateGameOver({
+      currentPlayer: this.currentPlayer,
+      playerTypes: this.playerTypes,
+      pocketed: this.pocketed
+    });
+
+    if (gameOverResult) {
+      if (this.mode === 'online') {
+        this.sendGameMessage({
+          type: 'game_over',
+          winner: gameOverResult.winner,
+          reason: gameOverResult.reason
+        });
       }
+      this.callbacks.onGameOver?.({
+        winner: gameOverResult.winner,
+        reason: gameOverResult.reason
+      });
     }
-  }
-
-  handleGameOver() {
-    const currentType = this.currentPlayer === 1
-      ? this.playerTypes.player1
-      : this.playerTypes.player2;
-
-    const allOwnPocketed = currentType === 'solid'
-      ? this.pocketed.solids.length === 7
-      : this.pocketed.stripes.length === 7;
-
-    const winner = allOwnPocketed ? this.currentPlayer : (this.currentPlayer === 1 ? 2 : 1);
-    const reason = allOwnPocketed ? 'Pocketed 8-ball after clearing all own balls' : 'Pocketed 8-ball early';
-
-    if (this.mode === 'online') {
-      this.sendGameMessage({ type: 'game_over', winner, reason });
-    }
-
-    this.callbacks.onGameOver?.({ winner, reason });
   }
 
   render() {
