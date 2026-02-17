@@ -460,8 +460,8 @@ class PoolGameEngine {
     }
 
     return {
-      centerX: this.canvas.width - 38,
-      centerY: 38,
+      centerX: this.canvas.width - 20,
+      centerY: this.canvas.height / 2 - 20,
       radius: 14
     };
   }
