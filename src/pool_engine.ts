@@ -623,12 +623,33 @@ class PoolGameEngine {
     return null;
   }
 
+  // Apply current physicsConfig values to all Rapier bodies/colliders
+  syncPhysicsConfig() {
+    for (const ball of this.balls) {
+      ball.body.setLinearDamping(physicsConfig.LINEAR_DAMPING);
+      ball.body.setAngularDamping(physicsConfig.ANGULAR_DAMPING);
+      ball.collider.setRestitution(physicsConfig.BALL_RESTITUTION);
+      ball.collider.setFriction(physicsConfig.BALL_FRICTION);
+      ball.collider.setMass(physicsConfig.BALL_MASS);
+    }
+    for (const cushionBody of this.cushionBodies) {
+      for (let i = 0; i < cushionBody.numColliders(); i++) {
+        const collider = cushionBody.collider(i);
+        collider.setRestitution(physicsConfig.CUSHION_RESTITUTION);
+        collider.setFriction(physicsConfig.CUSHION_FRICTION);
+      }
+    }
+  }
+
   gameLoop(currentTime: number = performance.now()) {
     if (!this.world) return;
 
     if (this.lastTime === 0) this.lastTime = currentTime;
     const frameTime = Math.min((currentTime - this.lastTime) / 1000, 0.05);
     this.lastTime = currentTime;
+
+    // Sync debug UI physics values to Rapier bodies/colliders
+    this.syncPhysicsConfig();
 
     // Fixed timestep physics
     this.accumulator += frameTime;
