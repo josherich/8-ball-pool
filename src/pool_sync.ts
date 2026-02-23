@@ -131,7 +131,8 @@ export function restoreBallStates(
     const colliderDesc = RAPIER.ColliderDesc.ball(physRadius)
       .setRestitution(physicsConfig.BALL_RESTITUTION)
       .setFriction(physicsConfig.BALL_FRICTION)
-      .setMass(physicsConfig.BALL_MASS);
+      .setMass(physicsConfig.BALL_MASS)
+      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
 
     const collider = world.createCollider(colliderDesc, body);
     newBalls.push({ body, collider, type: bs.type, number: bs.number });

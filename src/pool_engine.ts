@@ -25,11 +25,27 @@ import {
   hashGameState,
   restoreBallStates
 } from './pool_sync';
+import cueStrikeSfx from './pool-sounds/cue_strike.mp3';
+import breakShotBigSfx from './pool-sounds/break_shot_big.mp3';
+import breakShotSmallSfx from './pool-sounds/break_shot_small.mp3';
+import ballCollisionSfx from './pool-sounds/ball_collision.mp3';
+import ballCollisionAltSfx from './pool-sounds/ball_collision_alt.mp3';
+import cushionHitSfx from './pool-sounds/cushion_hit.mp3';
+import foulDingSfx from './pool-sounds/foul_ding.mp3';
 
 type PocketingAnimation = PocketedEvent & {
   startTime: number;
   duration: number;
 };
+
+type SoundName =
+  | 'cueStrike'
+  | 'breakShot'
+  | 'gameOpening'
+  | 'ballCollision'
+  | 'ballCollisionAlt'
+  | 'cushionHit'
+  | 'foulDing';
 
 class PoolGameEngine {
   canvas: HTMLCanvasElement;
@@ -74,6 +90,11 @@ class PoolGameEngine {
   cueSpinOffset: { x: number; y: number };
   draggingCueSpin: boolean;
   cueControlExpanded: boolean;
+  eventQueue: RAPIER.EventQueue | null;
+  audioClips: Record<SoundName, HTMLAudioElement | null>;
+  openingSoundPending: boolean;
+  lastBallCollisionSoundMs: number;
+  lastCushionHitSoundMs: number;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -118,11 +139,100 @@ class PoolGameEngine {
     this.cueSpinOffset = { x: 0, y: 0 };
     this.draggingCueSpin = false;
     this.cueControlExpanded = false;
+    this.eventQueue = null;
+    this.audioClips = this.createAudioClips();
+    this.openingSoundPending = false;
+    this.lastBallCollisionSoundMs = 0;
+    this.lastCushionHitSoundMs = 0;
+  }
+
+  createAudioClip(src: string, volume: number): HTMLAudioElement | null {
+    if (typeof Audio === 'undefined') return null;
+    const clip = new Audio(src);
+    clip.preload = 'auto';
+    clip.volume = volume;
+    return clip;
+  }
+
+  createAudioClips(): Record<SoundName, HTMLAudioElement | null> {
+    return {
+      cueStrike: this.createAudioClip(cueStrikeSfx, 0.5),
+      breakShot: this.createAudioClip(breakShotBigSfx, 0.56),
+      gameOpening: this.createAudioClip(breakShotSmallSfx, 0.42),
+      ballCollision: this.createAudioClip(ballCollisionSfx, 0.33),
+      ballCollisionAlt: this.createAudioClip(ballCollisionAltSfx, 0.3),
+      cushionHit: this.createAudioClip(cushionHitSfx, 0.28),
+      foulDing: this.createAudioClip(foulDingSfx, 0.5)
+    };
+  }
+
+  playSound(sound: SoundName, playbackRate: number = 1, onBlocked?: () => void) {
+    const baseClip = this.audioClips[sound];
+    if (!baseClip) return;
+
+    const clip = baseClip.cloneNode(true) as HTMLAudioElement;
+    clip.volume = baseClip.volume;
+    clip.playbackRate = playbackRate;
+
+    const playback = clip.play();
+    if (playback && typeof playback.catch === 'function') {
+      playback.catch(() => {
+        onBlocked?.();
+      });
+    }
+  }
+
+  playOpeningSound() {
+    this.openingSoundPending = false;
+    this.playSound('gameOpening', 1, () => {
+      this.openingSoundPending = true;
+    });
+  }
+
+  playShotSound(isBreakShot: boolean) {
+    const playbackRate = 0.96 + Math.random() * 0.08;
+    this.playSound(isBreakShot ? 'breakShot' : 'cueStrike', playbackRate);
+  }
+
+  processCollisionEvents() {
+    if (!this.eventQueue || !this.world) return;
+
+    const ballHandles = new Set(this.balls.map(ball => ball.collider.handle));
+    this.eventQueue.drainCollisionEvents((handle1, handle2, started) => {
+      if (!started) return;
+
+      const handle1IsBall = ballHandles.has(handle1);
+      const handle2IsBall = ballHandles.has(handle2);
+      if (!handle1IsBall && !handle2IsBall) return;
+
+      const now = performance.now();
+      if (handle1IsBall && handle2IsBall) {
+        if (now - this.lastBallCollisionSoundMs < 45) return;
+        const collisionSound = Math.random() < 0.5 ? 'ballCollision' : 'ballCollisionAlt';
+        this.playSound(collisionSound, 0.94 + Math.random() * 0.12);
+        this.lastBallCollisionSoundMs = now;
+        return;
+      }
+
+      const collider1 = this.world!.getCollider(handle1);
+      const collider2 = this.world!.getCollider(handle2);
+      const handle1IsFixed = collider1.parent()?.isFixed() ?? false;
+      const handle2IsFixed = collider2.parent()?.isFixed() ?? false;
+      const isCushionCollision =
+        (handle1IsBall && handle2IsFixed) ||
+        (handle2IsBall && handle1IsFixed);
+
+      if (!isCushionCollision || now - this.lastCushionHitSoundMs < 70) return;
+
+      this.playSound('cushionHit', 0.95 + Math.random() * 0.1);
+      this.lastCushionHitSoundMs = now;
+    });
   }
 
   init() {
     // Create physics world with no gravity (pool table is horizontal)
     this.world = createWorld(this.RAPIER);
+    this.eventQueue = new this.RAPIER.EventQueue(true);
 
     if (!this.world) return;
     const { pockets, cushionBodies } = setupTable({
@@ -147,6 +257,8 @@ class PoolGameEngine {
       this.joinRoom(this.joinCode);
     }
 
+    this.openingSoundPending = true;
+    this.playOpeningSound();
     this.gameLoop();
   }
 
@@ -405,6 +517,10 @@ class PoolGameEngine {
     });
 
     this.canvas.addEventListener('mousedown', () => {
+      if (this.openingSoundPending) {
+        this.playOpeningSound();
+      }
+
       if (this.cueControlExpanded) {
         if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, true)) {
           this.draggingCueSpin = true;
@@ -590,6 +706,8 @@ class PoolGameEngine {
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
+    const isBreakShot = !this.gameStarted;
+    this.playShotSound(isBreakShot);
     this.shotInProgress = true;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
 
@@ -736,7 +854,8 @@ class PoolGameEngine {
     this.world.timestep = FIXED_DT;
 
     while (this.accumulator >= FIXED_DT) {
-      this.world.step();
+      this.world.step(this.eventQueue || undefined);
+      this.processCollisionEvents();
       this.checkPockets();
       applyRollingFriction(this.balls, FIXED_DT);
       this.accumulator -= FIXED_DT;
@@ -771,6 +890,7 @@ class PoolGameEngine {
     // Ball-in-hand after scratch
     if (this.pocketedThisShot.cueBall) {
       this.ballInHand = true;
+      this.playSound('foulDing');
     }
 
     if (this.mode === 'online') {
@@ -1710,6 +1830,10 @@ class PoolGameEngine {
   destroy() {
     if (this.animationId) {
       cancelAnimationFrame(this.animationId);
+    }
+    if (this.eventQueue) {
+      this.eventQueue.free();
+      this.eventQueue = null;
     }
     if (this.world) {
       this.world.free();

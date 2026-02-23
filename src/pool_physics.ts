@@ -109,7 +109,8 @@ export const setupTable = ({
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = rapier.ColliderDesc.cuboid(hx, hy, hz)
       .setRestitution(physicsConfig.CUSHION_RESTITUTION)
-      .setFriction(physicsConfig.CUSHION_FRICTION);
+      .setFriction(physicsConfig.CUSHION_FRICTION)
+      .setActiveEvents(rapier.ActiveEvents.COLLISION_EVENTS);
     world.createCollider(colliderDesc, body);
     cushionBodies.push(body);
   };
@@ -252,7 +253,8 @@ export const setupBalls = ({
     const colliderDesc = rapier.ColliderDesc.ball(physRadius)
       .setRestitution(physicsConfig.BALL_RESTITUTION)
       .setFriction(physicsConfig.BALL_FRICTION)
-      .setMass(physicsConfig.BALL_MASS);
+      .setMass(physicsConfig.BALL_MASS)
+      .setActiveEvents(rapier.ActiveEvents.COLLISION_EVENTS);
 
     const collider = world.createCollider(colliderDesc, body);
 
@@ -395,7 +397,8 @@ export const checkPockets = ({
         const colliderDesc = rapier.ColliderDesc.ball(physRadius)
           .setRestitution(physicsConfig.BALL_RESTITUTION)
           .setFriction(physicsConfig.BALL_FRICTION)
-          .setMass(physicsConfig.BALL_MASS);
+          .setMass(physicsConfig.BALL_MASS)
+          .setActiveEvents(rapier.ActiveEvents.COLLISION_EVENTS);
 
         const newCollider = world.createCollider(colliderDesc, newBody);
 
