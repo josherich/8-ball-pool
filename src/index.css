@@ -26,8 +26,10 @@ button {
   transition: transform 0.2s ease;
 }
 
-button:hover {
-  transform: scale(1.05);
+@media (hover: hover) and (pointer: fine) {
+  button:hover {
+    transform: scale(1.05);
+  }
 }
 
 button:active {
@@ -44,4 +46,3 @@ input:focus {
   outline: 2px solid hsl(45, 80%, 65%);
   outline-offset: 2px;
 }
-

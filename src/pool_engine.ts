@@ -95,6 +95,10 @@ class PoolGameEngine {
   openingSoundPending: boolean;
   lastBallCollisionSoundMs: number;
   lastCushionHitSoundMs: number;
+  cleanupInputListeners: (() => void) | null;
+  mobileTouchControlsEnabled: boolean;
+  touchAimDragActive: boolean;
+  touchAimLastAngle: number;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -144,6 +148,10 @@ class PoolGameEngine {
     this.openingSoundPending = false;
     this.lastBallCollisionSoundMs = 0;
     this.lastCushionHitSoundMs = 0;
+    this.cleanupInputListeners = null;
+    this.mobileTouchControlsEnabled = Boolean(callbacks.mobileTouchControlsEnabled);
+    this.touchAimDragActive = false;
+    this.touchAimLastAngle = 0;
   }
 
   createAudioClip(src: string, volume: number): HTMLAudioElement | null {
@@ -483,87 +491,267 @@ class PoolGameEngine {
     }
   }
 
-  setupEventListeners() {
-    this.canvas.addEventListener('mousemove', (e) => {
-      const rect = this.canvas.getBoundingClientRect();
-      this.mousePos.x = e.clientX - rect.left;
-      this.mousePos.y = e.clientY - rect.top;
+  updateMousePosFromClient(clientX: number, clientY: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    this.mousePos.x = (clientX - rect.left) * scaleX;
+    this.mousePos.y = (clientY - rect.top) * scaleY;
+  }
 
-      if (this.draggingCueSpin) {
+  updateAimFromMousePosition() {
+    if (this.draggingCueSpin) {
+      this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
+      return;
+    }
+
+    if (this.canShoot() && !this.aiming) {
+      const cueBall = this.balls.find(b => b.type === 'cue');
+      if (cueBall) {
+        const ballPos = cueBall.body.translation();
+        const ballPixelX = ballPos.x * SCALE;
+        const ballPixelY = ballPos.z * SCALE; // Z is our "Y" in 2D view
+
+        const targetAngle = Math.atan2(
+          this.mousePos.y - ballPixelY,
+          this.mousePos.x - ballPixelX
+        );
+        const distance = Math.hypot(
+          this.mousePos.x - ballPixelX,
+          this.mousePos.y - ballPixelY
+        );
+        const smoothness = this.getAimSmoothing(distance);
+        this.aimAngle = this.interpolateAngle(this.aimAngle, targetAngle, smoothness);
+      }
+    }
+  }
+
+  getCueBallPixelPosition(): { x: number; y: number } | null {
+    const cueBall = this.balls.find(b => b.type === 'cue');
+    if (!cueBall) return null;
+    const ballPos = cueBall.body.translation();
+    return {
+      x: ballPos.x * SCALE,
+      y: ballPos.z * SCALE
+    };
+  }
+
+  getTouchAimSpeedFactor(distance: number): number {
+    const nearDistance = 60;
+    const farDistance = 520;
+    const maxFactor = 0.9;
+    const minFactor = 0.22;
+    const t = Math.min(Math.max((distance - nearDistance) / (farDistance - nearDistance), 0), 1);
+    return maxFactor - t * (maxFactor - minFactor);
+  }
+
+  beginTouchAimDrag() {
+    if (!this.mobileTouchControlsEnabled || this.aiming || !this.canShoot()) return;
+    const cueBallPos = this.getCueBallPixelPosition();
+    if (!cueBallPos) return;
+
+    this.touchAimDragActive = true;
+    this.touchAimLastAngle = Math.atan2(
+      this.mousePos.y - cueBallPos.y,
+      this.mousePos.x - cueBallPos.x
+    );
+  }
+
+  updateTouchAimDragFromMousePosition() {
+    if (!this.touchAimDragActive || this.aiming || !this.canShoot()) return;
+    const cueBallPos = this.getCueBallPixelPosition();
+    if (!cueBallPos) return;
+
+    const nextTouchAngle = Math.atan2(
+      this.mousePos.y - cueBallPos.y,
+      this.mousePos.x - cueBallPos.x
+    );
+    const delta = Math.atan2(
+      Math.sin(nextTouchAngle - this.touchAimLastAngle),
+      Math.cos(nextTouchAngle - this.touchAimLastAngle)
+    );
+    const distance = Math.hypot(
+      this.mousePos.x - cueBallPos.x,
+      this.mousePos.y - cueBallPos.y
+    );
+    const speedFactor = this.getTouchAimSpeedFactor(distance);
+    const nextAimAngle = this.aimAngle + delta * speedFactor;
+    this.aimAngle = Math.atan2(Math.sin(nextAimAngle), Math.cos(nextAimAngle));
+    this.touchAimLastAngle = nextTouchAngle;
+  }
+
+  endTouchAimDrag() {
+    this.touchAimDragActive = false;
+  }
+
+  startPowerShot() {
+    if (this.ballInHand) return;
+    if (this.canShoot()) {
+      this.aiming = true;
+      this.power = 0;
+      this.powerIncreasing = true;
+    }
+  }
+
+  releasePowerShot() {
+    if (this.aiming && this.canShoot()) {
+      this.shoot();
+    }
+    this.aiming = false;
+    this.powerIncreasing = false;
+  }
+
+  cancelPowerShot() {
+    this.aiming = false;
+    this.powerIncreasing = false;
+    this.power = 0;
+  }
+
+  beginTouchPowerControl(): boolean {
+    if (this.ballInHand) return false;
+    if (!this.canShoot()) return false;
+    this.endTouchAimDrag();
+    this.aiming = true;
+    this.powerIncreasing = false;
+    return true;
+  }
+
+  setTouchPowerRatio(ratio: number) {
+    if (!this.beginTouchPowerControl()) return;
+    const clamped = Math.max(0, Math.min(1, ratio));
+    this.power = clamped * physicsConfig.MAX_SHOT_POWER;
+  }
+
+  shootFromTouchControl() {
+    const shouldShoot = this.aiming && this.power > 0.001 && this.canShoot();
+    if (shouldShoot) {
+      this.shoot();
+    }
+    this.cancelPowerShot();
+  }
+
+  adjustAim(deltaRadians: number) {
+    if (!this.canShoot() || this.aiming) return;
+    this.aimAngle = Math.atan2(
+      Math.sin(this.aimAngle + deltaRadians),
+      Math.cos(this.aimAngle + deltaRadians)
+    );
+  }
+
+  handlePointerDown(source: 'mouse' | 'touch') {
+    if (this.openingSoundPending) {
+      this.playOpeningSound();
+    }
+
+    if (this.cueControlExpanded) {
+      if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, true)) {
+        this.draggingCueSpin = true;
         this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
         return;
       }
 
-      if (this.canShoot() && !this.aiming) {
-        const cueBall = this.balls.find(b => b.type === 'cue');
-        if (cueBall) {
-          // Get ball position in pixel coordinates
-          const ballPos = cueBall.body.translation();
-          const ballPixelX = ballPos.x * SCALE;
-          const ballPixelY = ballPos.z * SCALE; // Z is our "Y" in 2D view
+      this.cueControlExpanded = false;
+      return;
+    }
 
-          const targetAngle = Math.atan2(
-            this.mousePos.y - ballPixelY,
-            this.mousePos.x - ballPixelX
-          );
-          const distance = Math.hypot(
-            this.mousePos.x - ballPixelX,
-            this.mousePos.y - ballPixelY
-          );
-          const smoothness = this.getAimSmoothing(distance);
-          this.aimAngle = this.interpolateAngle(this.aimAngle, targetAngle, smoothness);
-        }
-      }
-    });
+    if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, false)) {
+      this.cueControlExpanded = true;
+      return;
+    }
 
-    this.canvas.addEventListener('mousedown', () => {
-      if (this.openingSoundPending) {
-        this.playOpeningSound();
-      }
+    if (this.ballInHand) {
+      this.placeBallInHand();
+      return;
+    }
 
-      if (this.cueControlExpanded) {
-        if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, true)) {
-          this.draggingCueSpin = true;
-          this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
-          return;
-        }
+    if (source === 'touch' && this.mobileTouchControlsEnabled) {
+      this.beginTouchAimDrag();
+      return;
+    }
+    this.startPowerShot();
+  }
 
-        this.cueControlExpanded = false;
-        return;
-      }
-
-      if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, false)) {
-        this.cueControlExpanded = true;
-        return;
-      }
-
-      if (this.ballInHand) {
-        this.placeBallInHand();
-        return;
-      }
-      if (this.canShoot()) {
-        this.aiming = true;
-        this.power = 0;
-        this.powerIncreasing = true;
-      }
-    });
-
-    this.canvas.addEventListener('mouseup', () => {
-      if (this.draggingCueSpin) {
-        this.draggingCueSpin = false;
-        return;
-      }
-
-      if (this.aiming && this.canShoot()) {
-        this.shoot();
-        this.aiming = false;
-        this.powerIncreasing = false;
-      }
-    });
-
-    this.canvas.addEventListener('mouseleave', () => {
+  handlePointerUp(source: 'mouse' | 'touch') {
+    if (this.draggingCueSpin) {
       this.draggingCueSpin = false;
-    });
+      return;
+    }
+    if (source === 'touch' && this.mobileTouchControlsEnabled) {
+      this.endTouchAimDrag();
+      return;
+    }
+    this.releasePowerShot();
+  }
+
+  setupEventListeners() {
+    const handleMouseMove = (e: MouseEvent) => {
+      this.updateMousePosFromClient(e.clientX, e.clientY);
+      this.updateAimFromMousePosition();
+    };
+    const handleMouseDown = () => {
+      this.handlePointerDown('mouse');
+    };
+    const handleMouseUp = () => {
+      this.handlePointerUp('mouse');
+    };
+    const handleMouseLeave = () => {
+      this.draggingCueSpin = false;
+      this.endTouchAimDrag();
+      this.cancelPowerShot();
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      const touch = e.changedTouches[0];
+      if (!touch) return;
+      this.updateMousePosFromClient(touch.clientX, touch.clientY);
+      this.handlePointerDown('touch');
+      e.preventDefault();
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const touch = e.changedTouches[0];
+      if (!touch) return;
+      this.updateMousePosFromClient(touch.clientX, touch.clientY);
+      if (this.touchAimDragActive) {
+        this.updateTouchAimDragFromMousePosition();
+      } else {
+        this.updateAimFromMousePosition();
+      }
+      e.preventDefault();
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      this.handlePointerUp('touch');
+      e.preventDefault();
+    };
+
+    const handleTouchCancel = (e: TouchEvent) => {
+      this.draggingCueSpin = false;
+      this.endTouchAimDrag();
+      this.cancelPowerShot();
+      e.preventDefault();
+    };
+
+    this.canvas.addEventListener('mousemove', handleMouseMove);
+    this.canvas.addEventListener('mousedown', handleMouseDown);
+    this.canvas.addEventListener('mouseup', handleMouseUp);
+    this.canvas.addEventListener('mouseleave', handleMouseLeave);
+    this.canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    this.canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    this.canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+    this.canvas.addEventListener('touchcancel', handleTouchCancel, { passive: false });
+
+    this.cleanupInputListeners = () => {
+      this.canvas.removeEventListener('mousemove', handleMouseMove);
+      this.canvas.removeEventListener('mousedown', handleMouseDown);
+      this.canvas.removeEventListener('mouseup', handleMouseUp);
+      this.canvas.removeEventListener('mouseleave', handleMouseLeave);
+      this.canvas.removeEventListener('touchstart', handleTouchStart);
+      this.canvas.removeEventListener('touchmove', handleTouchMove);
+      this.canvas.removeEventListener('touchend', handleTouchEnd);
+      this.canvas.removeEventListener('touchcancel', handleTouchCancel);
+    };
   }
 
   getCueSpinControlLayout(expanded: boolean) {
@@ -867,7 +1055,7 @@ class PoolGameEngine {
     }
 
     if (this.aiming && this.powerIncreasing) {
-      this.power = Math.min(this.power + 0.02, physicsConfig.MAX_SHOT_POWER);
+      this.power = Math.min(this.power + 0.01 * physicsConfig.MAX_SHOT_POWER, physicsConfig.MAX_SHOT_POWER);
     }
 
     this.render();
@@ -1830,6 +2018,10 @@ class PoolGameEngine {
   destroy() {
     if (this.animationId) {
       cancelAnimationFrame(this.animationId);
+    }
+    if (this.cleanupInputListeners) {
+      this.cleanupInputListeners();
+      this.cleanupInputListeners = null;
     }
     if (this.eventQueue) {
       this.eventQueue.free();

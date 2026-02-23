@@ -28,9 +28,9 @@ export const PHYSICS_DEFAULTS = {
   CUSHION_RESTITUTION: 0.75,  // Cushion bounce factor
   CUSHION_FRICTION: 0.15,     // Cushion surface friction
   ROLLING_FRICTION: 0.01,     // Felt resistance (simulated)
-  LINEAR_DAMPING: 0.3,        // Simulates rolling resistance on felt
-  ANGULAR_DAMPING: 0.5,       // Simulates rotational friction on felt
-  MAX_SHOT_POWER: 5,          // Maximum shot power (affects impulse strength)
+  LINEAR_DAMPING: 0.5,        // Simulates rolling resistance on felt
+  ANGULAR_DAMPING: 0.9,       // Simulates rotational friction on felt
+  MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
 } as const;
 
 // Mutable runtime physics config (tunable via debug UI)
