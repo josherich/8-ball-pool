@@ -77,6 +77,7 @@ class PoolGameEngine {
   cueControlExpanded: boolean;
   audio: PoolAudioManager;
   recentCollisions: Map<string, number>;
+  recentCushionHits: Map<string, number>;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
@@ -123,6 +124,7 @@ class PoolGameEngine {
     this.cueControlExpanded = false;
     this.audio = new PoolAudioManager();
     this.recentCollisions = new Map();
+    this.recentCushionHits = new Map();
   }
 
   init() {
@@ -653,6 +655,38 @@ class PoolGameEngine {
     }
   }
 
+  detectCushionCollisions(now: number) {
+    const bounds = this.getTableBounds();
+    const cushionHitThreshold = 0.18;
+
+    for (const ball of this.balls) {
+      const pos = ball.body.translation();
+      const vel = ball.body.linvel();
+      const speed = Math.hypot(vel.x, vel.z);
+      if (speed < 0.25) continue;
+
+      let hitSide: 'left' | 'right' | 'top' | 'bottom' | null = null;
+      const nearLeft = pos.x - bounds.tableLeft < cushionHitThreshold;
+      const nearRight = bounds.tableRight - pos.x < cushionHitThreshold;
+      const nearTop = pos.z - bounds.tableTop < cushionHitThreshold;
+      const nearBottom = bounds.tableBottom - pos.z < cushionHitThreshold;
+
+      if (nearLeft && vel.x < 0) hitSide = 'left';
+      else if (nearRight && vel.x > 0) hitSide = 'right';
+      else if (nearTop && vel.z < 0) hitSide = 'top';
+      else if (nearBottom && vel.z > 0) hitSide = 'bottom';
+
+      if (!hitSide) continue;
+
+      const key = `${ball.number}-${hitSide}`;
+      const lastHit = this.recentCushionHits.get(key) ?? 0;
+      if (now - lastHit < 110) continue;
+
+      this.recentCushionHits.set(key, now);
+      this.audio.playCushionCollision(speed);
+    }
+  }
+
   checkPockets() {
     if (!this.world) return;
     const pocketedEvents = checkPockets({
@@ -783,6 +817,7 @@ class PoolGameEngine {
     while (this.accumulator >= FIXED_DT) {
       this.world.step();
       this.detectBallCollisions(currentTime);
+      this.detectCushionCollisions(currentTime);
       this.checkPockets();
       applyRollingFriction(this.balls, FIXED_DT);
       this.accumulator -= FIXED_DT;

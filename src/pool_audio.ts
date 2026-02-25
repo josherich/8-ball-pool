@@ -93,6 +93,29 @@ class PoolAudioManager {
     });
   }
 
+
+  playCushionCollision(ballSpeed: number) {
+    this.withContext((ctx) => {
+      const now = ctx.currentTime;
+      const intensity = clamp(ballSpeed / 6, 0.1, 1);
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(160 + intensity * 110, now);
+      osc.frequency.exponentialRampToValueAtTime(90 + intensity * 40, now + 0.08);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.03 + intensity * 0.1, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.11);
+    });
+  }
+
   playFoul() {
     this.withContext((ctx) => {
       const now = ctx.currentTime;
