@@ -174,12 +174,13 @@ class PoolGameEngine {
     };
   }
 
-  playSound(sound: SoundName, playbackRate: number = 1, onBlocked?: () => void) {
+  playSound(sound: SoundName, playbackRate: number = 1, onBlocked?: () => void, volumeScale: number = 1) {
     const baseClip = this.audioClips[sound];
     if (!baseClip) return;
 
     const clip = baseClip.cloneNode(true) as HTMLAudioElement;
-    clip.volume = baseClip.volume;
+    const scaledVolume = Math.max(0, Math.min(baseClip.volume * volumeScale, 1));
+    clip.volume = scaledVolume;
     clip.playbackRate = playbackRate;
 
     const playback = clip.play();
@@ -197,9 +198,11 @@ class PoolGameEngine {
     });
   }
 
-  playShotSound(isBreakShot: boolean) {
+  playShotSound(isBreakShot: boolean, shotPower: number) {
     const playbackRate = 0.96 + Math.random() * 0.08;
-    this.playSound(isBreakShot ? 'breakShot' : 'cueStrike', playbackRate);
+    const normalizedPower = Math.max(0, Math.min(shotPower / physicsConfig.MAX_SHOT_POWER, 1));
+    const volumeScale = 0.35 + normalizedPower * 0.9;
+    this.playSound(isBreakShot ? 'breakShot' : 'cueStrike', playbackRate, undefined, volumeScale);
   }
 
   processCollisionEvents() {
@@ -214,16 +217,30 @@ class PoolGameEngine {
       if (!handle1IsBall && !handle2IsBall) return;
 
       const now = performance.now();
+      const collider1 = this.world!.getCollider(handle1);
+      const collider2 = this.world!.getCollider(handle2);
+      const body1 = collider1.parent();
+      const body2 = collider2.parent();
+
       if (handle1IsBall && handle2IsBall) {
         if (now - this.lastBallCollisionSoundMs < 45) return;
+        const linvel1 = body1?.linvel();
+        const linvel2 = body2?.linvel();
+        const relativeSpeed = linvel1 && linvel2
+          ? Math.hypot(
+              linvel1.x - linvel2.x,
+              linvel1.y - linvel2.y,
+              linvel1.z - linvel2.z
+            )
+          : 0;
+        const collisionSpeed = Math.min(relativeSpeed, 24);
+        const volumeScale = 0.22 + (collisionSpeed / 24) * 1.25;
         const collisionSound = Math.random() < 0.5 ? 'ballCollision' : 'ballCollisionAlt';
-        this.playSound(collisionSound, 0.94 + Math.random() * 0.12);
+        this.playSound(collisionSound, 0.94 + Math.random() * 0.12, undefined, volumeScale);
         this.lastBallCollisionSoundMs = now;
         return;
       }
 
-      const collider1 = this.world!.getCollider(handle1);
-      const collider2 = this.world!.getCollider(handle2);
       const handle1IsFixed = collider1.parent()?.isFixed() ?? false;
       const handle2IsFixed = collider2.parent()?.isFixed() ?? false;
       const isCushionCollision =
@@ -232,7 +249,14 @@ class PoolGameEngine {
 
       if (!isCushionCollision || now - this.lastCushionHitSoundMs < 70) return;
 
-      this.playSound('cushionHit', 0.95 + Math.random() * 0.1);
+      const ballSpeed = handle1IsBall
+        ? body1?.linvel()
+        : body2?.linvel();
+      const speed = ballSpeed ? Math.hypot(ballSpeed.x, ballSpeed.y, ballSpeed.z) : 0;
+      const clampedSpeed = Math.min(speed, 20);
+      const volumeScale = 0.25 + (clampedSpeed / 20) * 1.2;
+
+      this.playSound('cushionHit', 0.95 + Math.random() * 0.1, undefined, volumeScale);
       this.lastCushionHitSoundMs = now;
     });
   }
@@ -895,7 +919,7 @@ class PoolGameEngine {
     if (!cueBall) return;
 
     const isBreakShot = !this.gameStarted;
-    this.playShotSound(isBreakShot);
+    this.playShotSound(isBreakShot, input.power);
     this.shotInProgress = true;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
 
