@@ -162,7 +162,7 @@ class PoolGameEngine {
     this.touchAimLastAngle = 0;
   }
 
-  createAudioPool(src: string, volume: number, size: number = 3): AudioPool | null {
+  createAudioPool(src: string, volume: number, size: number): AudioPool | null {
     if (typeof Audio === 'undefined') return null;
     const clips: HTMLAudioElement[] = [];
     for (let i = 0; i < size; i++) {
@@ -176,12 +176,12 @@ class PoolGameEngine {
 
   createAudioPools(): Record<SoundName, AudioPool | null> {
     return {
-      cueStrike: this.createAudioPool(cueStrikeSfx, 0.5, 2),
+      cueStrike: this.createAudioPool(cueStrikeSfx, 0.5, 1),
       breakShot: this.createAudioPool(breakShotBigSfx, 0.56, 1),
       gameOpening: this.createAudioPool(breakShotSmallSfx, 0.42, 1),
-      ballCollision: this.createAudioPool(ballCollisionSfx, 0.33, 4),
-      ballCollisionAlt: this.createAudioPool(ballCollisionAltSfx, 0.3, 4),
-      cushionHit: this.createAudioPool(cushionHitSfx, 0.28, 3),
+      ballCollision: this.createAudioPool(ballCollisionSfx, 0.33, 2),
+      ballCollisionAlt: this.createAudioPool(ballCollisionAltSfx, 0.3, 2),
+      cushionHit: this.createAudioPool(cushionHitSfx, 0.28, 2),
       foulDing: this.createAudioPool(foulDingSfx, 0.5, 1)
     };
   }
@@ -210,17 +210,16 @@ class PoolGameEngine {
     this.audioUnlocked = true;
     for (const pool of Object.values(this.audioPool)) {
       if (!pool) continue;
-      for (const clip of pool.clips) {
-        const savedVolume = clip.volume;
-        clip.volume = 0;
-        const p = clip.play();
-        if (p) {
-          p.then(() => {
-            clip.pause();
-            clip.currentTime = 0;
-            clip.volume = savedVolume;
-          }).catch(() => {});
-        }
+      const clip = pool.clips[0];
+      const savedVolume = clip.volume;
+      clip.volume = 0;
+      const p = clip.play();
+      if (p) {
+        p.then(() => {
+          clip.pause();
+          clip.currentTime = 0;
+          clip.volume = savedVolume;
+        }).catch(() => {});
       }
     }
   }
@@ -2109,6 +2108,13 @@ class PoolGameEngine {
     if (this.cleanupTripleSlash) {
       this.cleanupTripleSlash();
       this.cleanupTripleSlash = null;
+    }
+    for (const pool of Object.values(this.audioPool)) {
+      if (!pool) continue;
+      for (const clip of pool.clips) {
+        clip.pause();
+        clip.src = '';
+      }
     }
   }
 }
