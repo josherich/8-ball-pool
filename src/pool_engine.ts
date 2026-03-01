@@ -47,6 +47,12 @@ type SoundName =
   | 'cushionHit'
   | 'foulDing';
 
+type AudioPool = {
+  clips: HTMLAudioElement[];
+  index: number;
+  baseVolume: number;
+};
+
 class PoolGameEngine {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
@@ -91,7 +97,8 @@ class PoolGameEngine {
   draggingCueSpin: boolean;
   cueControlExpanded: boolean;
   eventQueue: RAPIER.EventQueue | null;
-  audioClips: Record<SoundName, HTMLAudioElement | null>;
+  audioPool: Record<SoundName, AudioPool | null>;
+  audioUnlocked: boolean;
   openingSoundPending: boolean;
   lastBallCollisionSoundMs: number;
   lastCushionHitSoundMs: number;
@@ -144,7 +151,8 @@ class PoolGameEngine {
     this.draggingCueSpin = false;
     this.cueControlExpanded = false;
     this.eventQueue = null;
-    this.audioClips = this.createAudioClips();
+    this.audioPool = this.createAudioPools();
+    this.audioUnlocked = false;
     this.openingSoundPending = false;
     this.lastBallCollisionSoundMs = 0;
     this.lastCushionHitSoundMs = 0;
@@ -154,33 +162,39 @@ class PoolGameEngine {
     this.touchAimLastAngle = 0;
   }
 
-  createAudioClip(src: string, volume: number): HTMLAudioElement | null {
+  createAudioPool(src: string, volume: number, size: number = 3): AudioPool | null {
     if (typeof Audio === 'undefined') return null;
-    const clip = new Audio(src);
-    clip.preload = 'auto';
-    clip.volume = volume;
-    return clip;
+    const clips: HTMLAudioElement[] = [];
+    for (let i = 0; i < size; i++) {
+      const clip = new Audio(src);
+      clip.preload = 'auto';
+      clip.volume = volume;
+      clips.push(clip);
+    }
+    return { clips, index: 0, baseVolume: volume };
   }
 
-  createAudioClips(): Record<SoundName, HTMLAudioElement | null> {
+  createAudioPools(): Record<SoundName, AudioPool | null> {
     return {
-      cueStrike: this.createAudioClip(cueStrikeSfx, 0.5),
-      breakShot: this.createAudioClip(breakShotBigSfx, 0.56),
-      gameOpening: this.createAudioClip(breakShotSmallSfx, 0.42),
-      ballCollision: this.createAudioClip(ballCollisionSfx, 0.33),
-      ballCollisionAlt: this.createAudioClip(ballCollisionAltSfx, 0.3),
-      cushionHit: this.createAudioClip(cushionHitSfx, 0.28),
-      foulDing: this.createAudioClip(foulDingSfx, 0.5)
+      cueStrike: this.createAudioPool(cueStrikeSfx, 0.5, 2),
+      breakShot: this.createAudioPool(breakShotBigSfx, 0.56, 1),
+      gameOpening: this.createAudioPool(breakShotSmallSfx, 0.42, 1),
+      ballCollision: this.createAudioPool(ballCollisionSfx, 0.33, 4),
+      ballCollisionAlt: this.createAudioPool(ballCollisionAltSfx, 0.3, 4),
+      cushionHit: this.createAudioPool(cushionHitSfx, 0.28, 3),
+      foulDing: this.createAudioPool(foulDingSfx, 0.5, 1)
     };
   }
 
   playSound(sound: SoundName, playbackRate: number = 1, onBlocked?: () => void, volumeScale: number = 1) {
-    const baseClip = this.audioClips[sound];
-    if (!baseClip) return;
+    const pool = this.audioPool[sound];
+    if (!pool) return;
 
-    const clip = baseClip.cloneNode(true) as HTMLAudioElement;
-    const scaledVolume = Math.max(0, Math.min(baseClip.volume * volumeScale, 1));
-    clip.volume = scaledVolume;
+    const clip = pool.clips[pool.index];
+    pool.index = (pool.index + 1) % pool.clips.length;
+
+    clip.currentTime = 0;
+    clip.volume = Math.max(0, Math.min(pool.baseVolume * volumeScale, 1));
     clip.playbackRate = playbackRate;
 
     const playback = clip.play();
@@ -188,6 +202,26 @@ class PoolGameEngine {
       playback.catch(() => {
         onBlocked?.();
       });
+    }
+  }
+
+  unlockAudio() {
+    if (this.audioUnlocked) return;
+    this.audioUnlocked = true;
+    for (const pool of Object.values(this.audioPool)) {
+      if (!pool) continue;
+      for (const clip of pool.clips) {
+        const savedVolume = clip.volume;
+        clip.volume = 0;
+        const p = clip.play();
+        if (p) {
+          p.then(() => {
+            clip.pause();
+            clip.currentTime = 0;
+            clip.volume = savedVolume;
+          }).catch(() => {});
+        }
+      }
     }
   }
 
@@ -664,6 +698,8 @@ class PoolGameEngine {
   }
 
   handlePointerDown(source: 'mouse' | 'touch') {
+    this.unlockAudio();
+
     if (this.openingSoundPending) {
       this.playOpeningSound();
     }
