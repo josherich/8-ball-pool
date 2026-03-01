@@ -1,6 +1,6 @@
 # 🎱 8-Ball Pool Game
 
-A realistic 8-ball pool game built with React, TypeScript, and Matter.js physics engine.
+A realistic 8-ball pool game built with Coding Agents
 
 ## Features
 
@@ -9,6 +9,10 @@ A realistic 8-ball pool game built with React, TypeScript, and Matter.js physics
 - **Realistic Physics**: Matter.js powered ball collisions and movement
 - **Full Pool Mechanics**: 15 numbered balls, cue ball, 6 pockets, scratch detection
 - **Visual Polish**: Billiard table, colored balls with rotation, cue stick, power meter
+
+## Documentation
+
+[deepwiki](https://deepwiki.com/josherich/8-ball-pool)
 
 ## Prerequisites
 
