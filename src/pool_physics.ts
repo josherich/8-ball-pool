@@ -8,6 +8,7 @@ export type Ball = {
 };
 
 export type Pocket = { x: number; y: number; radius: number };
+export type PocketJaw = { x: number; y: number; radius: number };
 export type Pocketed = { solids: number[]; stripes: number[]; eight: boolean };
 export type PocketedThisShot = { solids: number[]; stripes: number[]; cueBall: boolean };
 export type PocketedEvent = {
@@ -216,7 +217,49 @@ export const setupTable = ({
     );
   }
 
-  return { pockets, cushionBodies };
+  // Pocket jaw (knuckle) colliders — small spheres at cushion segment ends near pockets.
+  // These simulate the rounded rubber tips that border each pocket opening, so balls
+  // can deflect off them at realistic angles instead of passing through a sharp gap.
+  const jawPhysRadius = physBallRadius * 0.42; // ~1 physics unit / 5 pixels
+  const pocketJaws: PocketJaw[] = [];
+
+  const createJaw = (physX: number, physZ: number): PocketJaw => {
+    const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(physX, cushionY, physZ);
+    const body = world.createRigidBody(bodyDesc);
+    const colliderDesc = rapier.ColliderDesc.ball(jawPhysRadius)
+      .setRestitution(physicsConfig.CUSHION_RESTITUTION)
+      .setFriction(physicsConfig.CUSHION_FRICTION)
+      .setActiveEvents(rapier.ActiveEvents.COLLISION_EVENTS);
+    world.createCollider(colliderDesc, body);
+    cushionBodies.push(body);
+    return { x: physX * SCALE, y: physZ * SCALE, radius: jawPhysRadius * SCALE };
+  };
+
+  // Top-left corner pocket jaws
+  pocketJaws.push(createJaw(topLeftStart, topZ));      // top cushion left end
+  pocketJaws.push(createJaw(leftX, leftStart));         // left cushion top end
+
+  // Top-middle side pocket jaws
+  pocketJaws.push(createJaw(topLeftEnd, topZ));         // top cushion right end (left jaw of side pocket)
+  pocketJaws.push(createJaw(topRightStart, topZ));      // top cushion left end  (right jaw of side pocket)
+
+  // Top-right corner pocket jaws
+  pocketJaws.push(createJaw(topRightEnd, topZ));        // top cushion right end
+  pocketJaws.push(createJaw(rightX, rightStart));       // right cushion top end
+
+  // Bottom-left corner pocket jaws
+  pocketJaws.push(createJaw(bottomLeftStart, bottomZ)); // bottom cushion left end
+  pocketJaws.push(createJaw(leftX, leftEnd));           // left cushion bottom end
+
+  // Bottom-middle side pocket jaws
+  pocketJaws.push(createJaw(bottomLeftEnd, bottomZ));   // bottom cushion right end (left jaw of side pocket)
+  pocketJaws.push(createJaw(bottomRightStart, bottomZ));// bottom cushion left end  (right jaw of side pocket)
+
+  // Bottom-right corner pocket jaws
+  pocketJaws.push(createJaw(bottomRightEnd, bottomZ));  // bottom cushion right end
+  pocketJaws.push(createJaw(rightX, rightEnd));         // right cushion bottom end
+
+  return { pockets, cushionBodies, pocketJaws };
 };
 
 export const setupBalls = ({

@@ -11,6 +11,7 @@ import {
   applyRollingFriction,
   type Ball,
   type Pocket,
+  type PocketJaw,
   type PocketedEvent,
   type Pocketed,
   type PocketedThisShot
@@ -80,6 +81,7 @@ class PoolGameEngine {
   roomCode: string | null;
   clientId: string | null;
   pockets: Pocket[];
+  pocketJaws: PocketJaw[];
   shotInProgress: boolean;
   pocketedThisShot: PocketedThisShot;
   pocketingAnimations: PocketingAnimation[];
@@ -134,6 +136,7 @@ class PoolGameEngine {
     this.roomCode = null;
     this.clientId = null;
     this.pockets = [];
+    this.pocketJaws = [];
     this.shotInProgress = false;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
     this.pocketingAnimations = [];
@@ -300,13 +303,14 @@ class PoolGameEngine {
     this.eventQueue = new this.RAPIER.EventQueue(true);
 
     if (!this.world) return;
-    const { pockets, cushionBodies } = setupTable({
+    const { pockets, cushionBodies, pocketJaws } = setupTable({
       canvas: this.canvas,
       world: this.world,
       RAPIER: this.RAPIER
     });
     this.pockets = pockets;
     this.cushionBodies = cushionBodies;
+    this.pocketJaws = pocketJaws;
     this.balls = setupBalls({ canvas: this.canvas, world: this.world, RAPIER: this.RAPIER });
     this.setupEventListeners();
 
@@ -1318,6 +1322,33 @@ class PoolGameEngine {
       ctx.beginPath();
       ctx.arc(pocket.x - 2, pocket.y - 2, pocket.radius * 0.5, 0, Math.PI * 2);
       ctx.stroke();
+    });
+
+    // Pocket jaw knuckles — rubber tips at pocket opening edges
+    this.pocketJaws.forEach((jaw) => {
+      // Dark rubber/leather tip base
+      ctx.fillStyle = 'hsl(25, 30%, 12%)';
+      ctx.beginPath();
+      ctx.arc(jaw.x, jaw.y, jaw.radius + 1.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Main knuckle body
+      const jawGrad = ctx.createRadialGradient(
+        jaw.x - jaw.radius * 0.3, jaw.y - jaw.radius * 0.3, 0,
+        jaw.x, jaw.y, jaw.radius
+      );
+      jawGrad.addColorStop(0, 'hsl(25, 20%, 22%)');
+      jawGrad.addColorStop(1, 'hsl(25, 15%, 10%)');
+      ctx.fillStyle = jawGrad;
+      ctx.beginPath();
+      ctx.arc(jaw.x, jaw.y, jaw.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Small specular highlight
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.beginPath();
+      ctx.arc(jaw.x - jaw.radius * 0.25, jaw.y - jaw.radius * 0.25, jaw.radius * 0.4, 0, Math.PI * 2);
+      ctx.fill();
     });
 
     // Ball shadows (drawn first, below all balls)
