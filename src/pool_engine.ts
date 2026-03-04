@@ -1259,6 +1259,56 @@ class PoolGameEngine {
     ctx.lineWidth = 2;
     ctx.strokeRect(60, 60, w - 120, h - 120);
 
+    // Visible pocket jaw facings (match physics pocket-opening geometry)
+    const ballRadius = 12;
+    const cornerPocketGap = 45;
+    const sidePocketGap = 40;
+    const cornerJawLength = 28;
+    const sideJawLength = 24;
+    const cornerJawDistance = cornerPocketGap - cornerJawLength * 0.55;
+    const cornerJawOffset = ballRadius * 0.9;
+    const sideJawAngle = Math.PI * 0.23;
+    const sideJawXOffset = sidePocketGap * 0.62;
+    const sideJawZOffset = ballRadius * 0.95;
+
+    type JawVisual = { x: number; y: number; yaw: number; length: number; thickness: number };
+    const cornerJawVisuals: JawVisual[] = [
+      { x: cushionInset + cornerJawDistance, y: cushionInset + cornerJawOffset, yaw: -Math.PI / 4, length: cornerJawLength, thickness: 5 },
+      { x: cushionInset + cornerJawOffset, y: cushionInset + cornerJawDistance, yaw: Math.PI / 4, length: cornerJawLength, thickness: 5 },
+      { x: w - cushionInset - cornerJawDistance, y: cushionInset + cornerJawOffset, yaw: Math.PI / 4, length: cornerJawLength, thickness: 5 },
+      { x: w - cushionInset - cornerJawOffset, y: cushionInset + cornerJawDistance, yaw: -Math.PI / 4, length: cornerJawLength, thickness: 5 },
+      { x: cushionInset + cornerJawDistance, y: h - cushionInset - cornerJawOffset, yaw: Math.PI / 4, length: cornerJawLength, thickness: 5 },
+      { x: cushionInset + cornerJawOffset, y: h - cushionInset - cornerJawDistance, yaw: -Math.PI / 4, length: cornerJawLength, thickness: 5 },
+      { x: w - cushionInset - cornerJawDistance, y: h - cushionInset - cornerJawOffset, yaw: -Math.PI / 4, length: cornerJawLength, thickness: 5 },
+      { x: w - cushionInset - cornerJawOffset, y: h - cushionInset - cornerJawDistance, yaw: Math.PI / 4, length: cornerJawLength, thickness: 5 }
+    ];
+
+    const sideJawVisuals: JawVisual[] = [
+      { x: w / 2 - sideJawXOffset, y: cushionInset + sideJawZOffset, yaw: sideJawAngle, length: sideJawLength, thickness: 5 },
+      { x: w / 2 + sideJawXOffset, y: cushionInset + sideJawZOffset, yaw: -sideJawAngle, length: sideJawLength, thickness: 5 },
+      { x: w / 2 - sideJawXOffset, y: h - cushionInset - sideJawZOffset, yaw: -sideJawAngle, length: sideJawLength, thickness: 5 },
+      { x: w / 2 + sideJawXOffset, y: h - cushionInset - sideJawZOffset, yaw: sideJawAngle, length: sideJawLength, thickness: 5 }
+    ];
+
+    const drawJaw = (jaw: JawVisual) => {
+      ctx.save();
+      ctx.translate(jaw.x, jaw.y);
+      ctx.rotate(jaw.yaw);
+
+      const jawGradient = ctx.createLinearGradient(0, -jaw.thickness / 2, 0, jaw.thickness / 2);
+      jawGradient.addColorStop(0, 'hsl(145, 35%, 30%)');
+      jawGradient.addColorStop(1, 'hsl(145, 38%, 18%)');
+      ctx.fillStyle = jawGradient;
+      ctx.fillRect(-jaw.length / 2, -jaw.thickness / 2, jaw.length, jaw.thickness);
+
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-jaw.length / 2, -jaw.thickness / 2, jaw.length, jaw.thickness);
+      ctx.restore();
+    };
+
+    [...cornerJawVisuals, ...sideJawVisuals].forEach(drawJaw);
+
     // Pockets with proper openings
     this.pockets.forEach((pocket, index) => {
       // Outer pocket rim (dark wood)
