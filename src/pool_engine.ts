@@ -270,7 +270,8 @@ class PoolGameEngine {
             )
           : 0;
         const collisionSpeed = Math.min(relativeSpeed, 24);
-        const volumeScale = 0.22 + (collisionSpeed / 24) * 1.25;
+        const normalizedCollisionSpeed = collisionSpeed / 24;
+        const volumeScale = 0.04 + Math.pow(normalizedCollisionSpeed, 1.75) * 0.96;
         const collisionSound = Math.random() < 0.5 ? 'ballCollision' : 'ballCollisionAlt';
         this.playSound(collisionSound, 0.94 + Math.random() * 0.12, undefined, volumeScale);
         this.lastBallCollisionSoundMs = now;
@@ -290,7 +291,8 @@ class PoolGameEngine {
         : body2?.linvel();
       const speed = ballSpeed ? Math.hypot(ballSpeed.x, ballSpeed.y, ballSpeed.z) : 0;
       const clampedSpeed = Math.min(speed, 20);
-      const volumeScale = 0.25 + (clampedSpeed / 20) * 1.2;
+      const normalizedCushionSpeed = clampedSpeed / 20;
+      const volumeScale = 0.03 + Math.pow(normalizedCushionSpeed, 1.9) * 0.9;
 
       this.playSound('cushionHit', 0.95 + Math.random() * 0.1, undefined, volumeScale);
       this.lastCushionHitSoundMs = now;
