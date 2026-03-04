@@ -1259,6 +1259,59 @@ class PoolGameEngine {
     ctx.lineWidth = 2;
     ctx.strokeRect(60, 60, w - 120, h - 120);
 
+    // Pocket opening jaw geometry (visual match for physics collision jaws)
+    const drawJaw = (x: number, y: number, angle: number, length: number, width: number) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+
+      const jawGradient = ctx.createLinearGradient(-length / 2, 0, length / 2, 0);
+      jawGradient.addColorStop(0, 'hsl(145, 34%, 20%)');
+      jawGradient.addColorStop(0.55, 'hsl(145, 30%, 16%)');
+      jawGradient.addColorStop(1, 'hsl(145, 36%, 24%)');
+      ctx.fillStyle = jawGradient;
+      ctx.fillRect(-length / 2, -width / 2, length, width);
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-length / 2, -width / 2 + 1);
+      ctx.lineTo(length / 2, -width / 2 + 1);
+      ctx.stroke();
+
+      ctx.restore();
+    };
+
+    const cornerJawLength = 24;
+    const cornerJawWidth = 7;
+    const cornerJawOffset = 12;
+    const cornerJawDistance = 30;
+    const sideJawLength = 20;
+    const sideJawWidth = 7;
+    const sideJawXOffset = 24;
+    const sideJawYOffset = 12;
+    const sideJawAngle = Math.PI * 0.23;
+
+    const cornerJaws = [
+      { x: cushionInset + cornerJawDistance, y: cushionInset + cornerJawOffset, angle: -Math.PI / 4 },
+      { x: cushionInset + cornerJawOffset, y: cushionInset + cornerJawDistance, angle: Math.PI / 4 },
+      { x: w - cushionInset - cornerJawDistance, y: cushionInset + cornerJawOffset, angle: Math.PI / 4 },
+      { x: w - cushionInset - cornerJawOffset, y: cushionInset + cornerJawDistance, angle: -Math.PI / 4 },
+      { x: cushionInset + cornerJawDistance, y: h - cushionInset - cornerJawOffset, angle: Math.PI / 4 },
+      { x: cushionInset + cornerJawOffset, y: h - cushionInset - cornerJawDistance, angle: -Math.PI / 4 },
+      { x: w - cushionInset - cornerJawDistance, y: h - cushionInset - cornerJawOffset, angle: -Math.PI / 4 },
+      { x: w - cushionInset - cornerJawOffset, y: h - cushionInset - cornerJawDistance, angle: Math.PI / 4 }
+    ];
+    cornerJaws.forEach(jaw => drawJaw(jaw.x, jaw.y, jaw.angle, cornerJawLength, cornerJawWidth));
+
+    const sideJaws = [
+      { x: w / 2 - sideJawXOffset, y: cushionInset + sideJawYOffset, angle: sideJawAngle },
+      { x: w / 2 + sideJawXOffset, y: cushionInset + sideJawYOffset, angle: -sideJawAngle },
+      { x: w / 2 - sideJawXOffset, y: h - cushionInset - sideJawYOffset, angle: -sideJawAngle },
+      { x: w / 2 + sideJawXOffset, y: h - cushionInset - sideJawYOffset, angle: sideJawAngle }
+    ];
+    sideJaws.forEach(jaw => drawJaw(jaw.x, jaw.y, jaw.angle, sideJawLength, sideJawWidth));
+
     // Pockets with proper openings
     this.pockets.forEach((pocket, index) => {
       // Outer pocket rim (dark wood)

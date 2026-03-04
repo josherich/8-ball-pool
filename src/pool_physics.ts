@@ -100,12 +100,31 @@ export const setupTable = ({
   const physSideGap = sidePocketGap / SCALE;
   const physBallRadius = ballRadius / SCALE;
   const cushionHeight = physBallRadius * 2.5; // Cushions are taller than balls
+  const cornerJawLength = 28 / SCALE;
+  const sideJawLength = 24 / SCALE;
+  const sideJawAngle = Math.PI * 0.23;
 
   const cushionBodies: RAPIER.RigidBody[] = [];
 
-  // Helper to create a cushion cuboid
-  const createCushion = (x: number, y: number, z: number, hx: number, hy: number, hz: number) => {
+  const quatFromYAngle = (angle: number) => {
+    const half = angle * 0.5;
+    return { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) };
+  };
+
+  // Helper to create a cushion cuboid (supports yaw rotation for pocket jaws)
+  const createCushion = (
+    x: number,
+    y: number,
+    z: number,
+    hx: number,
+    hy: number,
+    hz: number,
+    yaw: number = 0
+  ) => {
     const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    if (yaw !== 0) {
+      bodyDesc.setRotation(quatFromYAngle(yaw));
+    }
     const body = world.createRigidBody(bodyDesc);
     const colliderDesc = rapier.ColliderDesc.cuboid(hx, hy, hz)
       .setRestitution(physicsConfig.CUSHION_RESTITUTION)
@@ -213,6 +232,111 @@ export const setupTable = ({
       physCushionThickness / 2,
       cushionHeight / 2,
       rightLength / 2
+    );
+  }
+
+  // Pocket opening collision geometry ("jaws")
+  // These angled faces sit near each opening and guide/reject balls realistically.
+
+  // Corner jaws (45-degree facings)
+  const cornerJawHalfThickness = physCushionThickness * 0.28;
+  const cornerJawHalfLength = cornerJawLength / 2;
+  const cornerJawOffset = physBallRadius * 0.9;
+  const cornerJawDistance = physCornerGap - cornerJawLength * 0.55;
+
+  const cornerConfigs = [
+    {
+      x: physCushionInset + cornerJawDistance,
+      z: physCushionInset + cornerJawOffset,
+      yaw: -Math.PI / 4
+    },
+    {
+      x: physCushionInset + cornerJawOffset,
+      z: physCushionInset + cornerJawDistance,
+      yaw: Math.PI / 4
+    },
+    {
+      x: physW - physCushionInset - cornerJawDistance,
+      z: physCushionInset + cornerJawOffset,
+      yaw: Math.PI / 4
+    },
+    {
+      x: physW - physCushionInset - cornerJawOffset,
+      z: physCushionInset + cornerJawDistance,
+      yaw: -Math.PI / 4
+    },
+    {
+      x: physCushionInset + cornerJawDistance,
+      z: physH - physCushionInset - cornerJawOffset,
+      yaw: Math.PI / 4
+    },
+    {
+      x: physCushionInset + cornerJawOffset,
+      z: physH - physCushionInset - cornerJawDistance,
+      yaw: -Math.PI / 4
+    },
+    {
+      x: physW - physCushionInset - cornerJawDistance,
+      z: physH - physCushionInset - cornerJawOffset,
+      yaw: -Math.PI / 4
+    },
+    {
+      x: physW - physCushionInset - cornerJawOffset,
+      z: physH - physCushionInset - cornerJawDistance,
+      yaw: Math.PI / 4
+    }
+  ];
+
+  for (const jaw of cornerConfigs) {
+    createCushion(
+      jaw.x,
+      cushionY,
+      jaw.z,
+      cornerJawHalfLength,
+      cushionHeight / 2,
+      cornerJawHalfThickness,
+      jaw.yaw
+    );
+  }
+
+  // Side pocket jaws (slanted toward each side opening)
+  const sideJawHalfThickness = physCushionThickness * 0.3;
+  const sideJawHalfLength = sideJawLength / 2;
+  const sideJawXOffset = physSideGap * 0.62;
+  const sideJawZOffset = physBallRadius * 0.95;
+
+  const sideConfigs = [
+    {
+      x: physW / 2 - sideJawXOffset,
+      z: physCushionInset + sideJawZOffset,
+      yaw: sideJawAngle
+    },
+    {
+      x: physW / 2 + sideJawXOffset,
+      z: physCushionInset + sideJawZOffset,
+      yaw: -sideJawAngle
+    },
+    {
+      x: physW / 2 - sideJawXOffset,
+      z: physH - physCushionInset - sideJawZOffset,
+      yaw: -sideJawAngle
+    },
+    {
+      x: physW / 2 + sideJawXOffset,
+      z: physH - physCushionInset - sideJawZOffset,
+      yaw: sideJawAngle
+    }
+  ];
+
+  for (const jaw of sideConfigs) {
+    createCushion(
+      jaw.x,
+      cushionY,
+      jaw.z,
+      sideJawHalfLength,
+      cushionHeight / 2,
+      sideJawHalfThickness,
+      jaw.yaw
     );
   }
 
