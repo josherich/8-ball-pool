@@ -1745,7 +1745,7 @@ class PoolGameEngine {
     const currentPlayerType = this.currentPlayer === 1
       ? this.playerTypes.player1
       : this.playerTypes.player2;
-    const activeGroup = currentPlayerType ?? (this.currentPlayer === 1 ? 'solid' : 'stripe');
+    const activeGroup = currentPlayerType;
     const solidsAreActive = activeGroup === 'solid';
     const stripesAreActive = activeGroup === 'stripe';
 
@@ -1779,7 +1779,7 @@ class PoolGameEngine {
     for (let i = 1; i <= 7; i++) {
       const x = solidsStartX + (i - 1) * ballSpacing;
       const isPocketed = this.pocketed.solids.includes(i);
-      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'solid', i, colors[(i - 1) % 8], isPocketed, !solidsAreActive);
+      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'solid', i, colors[(i - 1) % 8], isPocketed, Boolean(activeGroup) && !solidsAreActive);
     }
 
     // Render 8-ball in the middle
@@ -1790,7 +1790,7 @@ class PoolGameEngine {
     for (let i = 9; i <= 15; i++) {
       const x = stripesEndX - (15 - i) * ballSpacing;
       const isPocketed = this.pocketed.stripes.includes(i);
-      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'stripe', i, colors[(i - 9) % 8], isPocketed, !stripesAreActive);
+      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'stripe', i, colors[(i - 9) % 8], isPocketed, Boolean(activeGroup) && !stripesAreActive);
     }
   }
 
