@@ -1670,23 +1670,6 @@ class PoolGameEngine {
     // Ball display and turn indicator
     this.renderBallDisplay(ctx, w, h);
 
-    // Current turn indicator
-    let turnText: string;
-    if (this.ballInHand) {
-      turnText = this.mode === 'online'
-        ? (this.isMyTurn ? 'Your Turn - Ball in Hand' : 'Opponent\'s Turn - Ball in Hand')
-        : `Player ${this.currentPlayer}'s Turn - Ball in Hand`;
-    } else {
-      turnText = this.mode === 'online'
-        ? (this.isMyTurn ? 'Your Turn' : 'Opponent\'s Turn')
-        : `Player ${this.currentPlayer}'s Turn`;
-    }
-
-    ctx.fillStyle = this.ballInHand ? 'hsl(45, 80%, 65%)' : (this.canShoot() ? 'hsl(145, 50%, 50%)' : 'hsl(25, 50%, 50%)');
-    ctx.font = 'bold 20px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(turnText, w / 2 - 120, 30);
-
     this.renderCueSpinControl(ctx);
   }
 
@@ -1781,6 +1764,8 @@ class PoolGameEngine {
     const displayY = 20; // Y position for ball display
     const ballRadius = 10; // Smaller balls for display
     const ballSpacing = 24; // Space between ball centers
+    const groupPaddingX = 16;
+    const groupPaddingY = 8;
 
     // Colors for balls 1-7 (solids) and 9-15 (stripes use same colors)
     const colors = [
@@ -1788,24 +1773,55 @@ class PoolGameEngine {
       '#056839', '#862234', '#333333'
     ];
 
-    // Render solids (1-7) on top left
+    const currentPlayerType = this.currentPlayer === 1
+      ? this.playerTypes.player1
+      : this.playerTypes.player2;
+    const activeGroup = currentPlayerType;
+    const solidsAreActive = activeGroup === 'solid';
+    const stripesAreActive = activeGroup === 'stripe';
+
     const solidsStartX = 90;
+    const solidsEndX = solidsStartX + (6 * ballSpacing);
+    const stripesEndX = canvasWidth - 90;
+    const stripesStartX = stripesEndX - (6 * ballSpacing);
+
+    const drawGroupHighlight = (startX: number, endX: number, active: boolean) => {
+      ctx.save();
+      ctx.strokeStyle = active ? 'hsl(45, 85%, 62%)' : 'rgba(148, 163, 184, 0.22)';
+      ctx.fillStyle = active ? 'rgba(250, 204, 21, 0.14)' : 'rgba(75, 85, 99, 0.2)';
+      ctx.lineWidth = active ? 2 : 1;
+      const width = endX - startX + (groupPaddingX * 2);
+      const x = startX - groupPaddingX;
+      const y = displayY - ballRadius - groupPaddingY;
+      const height = ballRadius * 2 + groupPaddingY * 2;
+      const radius = 12;
+
+      ctx.beginPath();
+      ctx.roundRect(x, y, width, height, radius);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    drawGroupHighlight(solidsStartX, solidsEndX, solidsAreActive);
+    drawGroupHighlight(stripesStartX, stripesEndX, stripesAreActive);
+
+    // Render solids (1-7) on top left
     for (let i = 1; i <= 7; i++) {
       const x = solidsStartX + (i - 1) * ballSpacing;
       const isPocketed = this.pocketed.solids.includes(i);
-      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'solid', i, colors[(i - 1) % 8], isPocketed);
+      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'solid', i, colors[(i - 1) % 8], isPocketed, Boolean(activeGroup) && !solidsAreActive);
     }
 
     // Render 8-ball in the middle
     const eightBallX = canvasWidth / 2 + 50;
-    this.renderDisplayBall(ctx, eightBallX, displayY, ballRadius, 'eight', 8, '#333333', this.pocketed.eight);
+    this.renderDisplayBall(ctx, eightBallX, displayY, ballRadius, 'eight', 8, '#333333', this.pocketed.eight, false);
 
     // Render stripes (9-15) on top right
-    const stripesEndX = canvasWidth - 90;
     for (let i = 9; i <= 15; i++) {
       const x = stripesEndX - (15 - i) * ballSpacing;
       const isPocketed = this.pocketed.stripes.includes(i);
-      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'stripe', i, colors[(i - 9) % 8], isPocketed);
+      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'stripe', i, colors[(i - 9) % 8], isPocketed, Boolean(activeGroup) && !stripesAreActive);
     }
   }
 
@@ -1818,13 +1834,16 @@ class PoolGameEngine {
     ballType: string,
     ballNumber: number,
     color: string,
-    isPocketed: boolean
+    isPocketed: boolean,
+    isMuted: boolean
   ) {
     ctx.save();
 
     // Apply gray filter for pocketed balls
     if (isPocketed) {
       ctx.globalAlpha = 0.35;
+    } else if (isMuted) {
+      ctx.globalAlpha = 0.4;
     }
 
     if (ballType === 'eight') {
