@@ -1326,30 +1326,53 @@ class PoolGameEngine {
       ctx.stroke();
     });
 
-    // Pocket jaw knuckles — rubber tips at pocket opening edges
+    // Pocket jaw knuckles — rubber tips at pocket opening edges.
+    // Physics positions are where a ball centre would hit the jaw; visually we
+    // project each jaw onto the pocket-hole rim so the knuckle appears as a
+    // small bump right at the edge of the opening.
     this.pocketJaws.forEach((jaw) => {
-      // Dark rubber/leather tip base
+      // Find the pocket this jaw belongs to (nearest by centre distance)
+      let nearestPocket = this.pockets[0];
+      let minDist = Infinity;
+      this.pockets.forEach(p => {
+        const d = Math.hypot(jaw.x - p.x, jaw.y - p.y);
+        if (d < minDist) { minDist = d; nearestPocket = p; }
+      });
+
+      // Direction from pocket centre toward physics jaw position
+      const dx = jaw.x - nearestPocket.x;
+      const dy = jaw.y - nearestPocket.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const nx = dx / dist;
+      const ny = dy / dist;
+
+      // Place visual centre just outside the pocket hole edge
+      const vr = jaw.radius;
+      const vx = nearestPocket.x + nx * (nearestPocket.radius + vr * 0.6);
+      const vy = nearestPocket.y + ny * (nearestPocket.radius + vr * 0.6);
+
+      // Dark rubber/leather rim
       ctx.fillStyle = 'hsl(25, 30%, 12%)';
       ctx.beginPath();
-      ctx.arc(jaw.x, jaw.y, jaw.radius + 1.5, 0, Math.PI * 2);
+      ctx.arc(vx, vy, vr + 1.5, 0, Math.PI * 2);
       ctx.fill();
 
-      // Main knuckle body
+      // Main knuckle body with subtle gradient
       const jawGrad = ctx.createRadialGradient(
-        jaw.x - jaw.radius * 0.3, jaw.y - jaw.radius * 0.3, 0,
-        jaw.x, jaw.y, jaw.radius
+        vx - vr * 0.3, vy - vr * 0.3, 0,
+        vx, vy, vr
       );
       jawGrad.addColorStop(0, 'hsl(25, 20%, 22%)');
       jawGrad.addColorStop(1, 'hsl(25, 15%, 10%)');
       ctx.fillStyle = jawGrad;
       ctx.beginPath();
-      ctx.arc(jaw.x, jaw.y, jaw.radius, 0, Math.PI * 2);
+      ctx.arc(vx, vy, vr, 0, Math.PI * 2);
       ctx.fill();
 
       // Small specular highlight
       ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.beginPath();
-      ctx.arc(jaw.x - jaw.radius * 0.25, jaw.y - jaw.radius * 0.25, jaw.radius * 0.4, 0, Math.PI * 2);
+      ctx.arc(vx - vr * 0.25, vy - vr * 0.25, vr * 0.4, 0, Math.PI * 2);
       ctx.fill();
     });
 
