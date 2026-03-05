@@ -430,41 +430,90 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
   const frictionCoeff = physicsConfig.ROLLING_FRICTION;
   const pixelRadius = 12;
   const physRadius = pixelRadius / SCALE;
+  const gravity = 9.81;
+  const maxSlipDeltaV = frictionCoeff * gravity * dt;
+  const sideSpinCurveStrength = 0.32;
 
   for (const ball of balls) {
     const linvel = ball.body.linvel();
+    const angvel = ball.body.angvel();
     const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
 
-    if (speed > 0.01) {
-      // Apply friction force opposite to velocity
-      const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * 9.81; // F = mu * m * g
+    // Convert angular velocity to equivalent rolling linear velocity.
+    // For pure rolling on the felt:
+    //   v.x ~= omega.z * r
+    //   v.z ~= -omega.x * r
+    const rollingVelX = angvel.z * physRadius;
+    const rollingVelZ = -angvel.x * physRadius;
+    const slipX = linvel.x - rollingVelX;
+    const slipZ = linvel.z - rollingVelZ;
+    const slipSpeed = Math.hypot(slipX, slipZ);
+
+    if (slipSpeed > 0.0001) {
+      // Kinetic friction at contact point: oppose sliding at the cloth contact.
+      const deltaV = Math.min(maxSlipDeltaV, slipSpeed);
+      const nx = slipX / slipSpeed;
+      const nz = slipZ / slipSpeed;
+
+      // Linear correction from friction impulse.
+      const correctedLinvel = {
+        x: linvel.x - nx * deltaV,
+        y: linvel.y,
+        z: linvel.z - nz * deltaV
+      };
+      ball.body.setLinvel(correctedLinvel, true);
+
+      // Matching angular correction for a solid sphere (I = 2/5 m r^2).
+      const angularFactor = 2.5 / physRadius;
+      ball.body.setAngvel({
+        x: angvel.x + nz * deltaV * angularFactor,
+        y: angvel.y,
+        z: angvel.z - nx * deltaV * angularFactor
+      }, true);
+    }
+
+    // Side spin (Y-axis) can slightly curve trajectory while the cue ball is sliding.
+    if (Math.abs(angvel.y) > 0.01 && speed > 0.05) {
+      const curveAccel = sideSpinCurveStrength * angvel.y;
+      const perpX = -linvel.z / speed;
+      const perpZ = linvel.x / speed;
+      ball.body.setLinvel({
+        x: linvel.x + perpX * curveAccel * dt,
+        y: linvel.y,
+        z: linvel.z + perpZ * curveAccel * dt
+      }, true);
+      ball.body.setAngvel({
+        x: ball.body.angvel().x,
+        y: angvel.y * (1 - Math.min(dt * 0.75, 0.12)),
+        z: ball.body.angvel().z
+      }, true);
+    }
+
+    const postFrictionLinvel = ball.body.linvel();
+    const postFrictionSpeed = Math.hypot(postFrictionLinvel.x, postFrictionLinvel.z);
+
+    if (postFrictionSpeed > 0.01) {
+      // Rolling resistance as balls settle into pure rolling.
+      const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * gravity; // F = mu * m * g
       const deceleration = frictionForce / physicsConfig.BALL_MASS;
 
       // Reduce velocity slightly each step
-      const newSpeed = Math.max(0, speed - deceleration * dt);
-      const factor = speed > 0 ? newSpeed / speed : 0;
+      const newSpeed = Math.max(0, postFrictionSpeed - deceleration * dt);
+      const factor = postFrictionSpeed > 0 ? newSpeed / postFrictionSpeed : 0;
 
       ball.body.setLinvel({
-        x: linvel.x * factor,
-        y: linvel.y,
-        z: linvel.z * factor
+        x: postFrictionLinvel.x * factor,
+        y: postFrictionLinvel.y,
+        z: postFrictionLinvel.z * factor
       }, true);
 
-      // Also apply rolling: angular velocity should match linear velocity
-      // For a rolling ball: omega = v / r
-      if (speed > 0.05) {
-        const targetAngVelX = -linvel.z / physRadius; // Rotation around X from Z motion
-        const targetAngVelZ = linvel.x / physRadius;  // Rotation around Z from X motion
-
-        const currentAngVel = ball.body.angvel();
-        // Blend toward proper rolling (gradual correction)
-        const blend = 0.1;
-        ball.body.setAngvel({
-          x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
-          y: currentAngVel.y * 0.95, // Damp vertical spin
-          z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
-        }, true);
-      }
+      // Damp residual side-spin slowly to preserve cue-ball english feel.
+      const currentAngVel = ball.body.angvel();
+      ball.body.setAngvel({
+        x: currentAngVel.x,
+        y: currentAngVel.y * (1 - Math.min(dt * 0.35, 0.06)),
+        z: currentAngVel.z
+      }, true);
     } else {
       // Stop very slow balls completely
       ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
