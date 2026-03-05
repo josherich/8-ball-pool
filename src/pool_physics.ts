@@ -29,7 +29,7 @@ export const PHYSICS_DEFAULTS = {
   CUSHION_FRICTION: 0.15,     // Cushion surface friction
   ROLLING_FRICTION: 0.01,     // Felt resistance (simulated)
   LINEAR_DAMPING: 0.5,        // Simulates rolling resistance on felt
-  ANGULAR_DAMPING: 0.9,       // Simulates rotational friction on felt
+  ANGULAR_DAMPING: 0.1,       // Low damping so spin effects are preserved
   MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
 } as const;
 
@@ -427,51 +427,96 @@ export const checkPockets = ({
 };
 
 export const applyRollingFriction = (balls: Ball[], dt: number) => {
-  const frictionCoeff = physicsConfig.ROLLING_FRICTION;
   const pixelRadius = 12;
   const physRadius = pixelRadius / SCALE;
+  const g = 9.81;
+  const ballMass = physicsConfig.BALL_MASS;
+  // Moment of inertia for a solid sphere: I = 2/5 * m * r^2
+  const I = (2.0 / 5.0) * ballMass * physRadius * physRadius;
+  // Kinetic (sliding) friction converts spin energy into linear motion
+  const mu_slide = 0.4;
+  const mu_roll = physicsConfig.ROLLING_FRICTION;
 
   for (const ball of balls) {
     const linvel = ball.body.linvel();
+    const angvel = ball.body.angvel();
     const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
 
-    if (speed > 0.01) {
-      // Apply friction force opposite to velocity
-      const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * 9.81; // F = mu * m * g
-      const deceleration = frictionForce / physicsConfig.BALL_MASS;
+    // Contact point slip velocity.
+    // r_contact = (0, -physRadius, 0) (contact point directly below ball centre).
+    // omega × r_contact = (wz*r, 0, -wx*r)
+    // v_contact = v_linear + omega × r_contact = (vx + wz*r, 0, vz - wx*r)
+    // For pure rolling v_contact = 0, giving wx_roll = vz/r, wz_roll = -vx/r.
+    const slip_x = linvel.x + angvel.z * physRadius;
+    const slip_z = linvel.z - angvel.x * physRadius;
+    const slip_mag = Math.sqrt(slip_x * slip_x + slip_z * slip_z);
 
-      // Reduce velocity slightly each step
-      const newSpeed = Math.max(0, speed - deceleration * dt);
-      const factor = speed > 0 ? newSpeed / speed : 0;
-
-      ball.body.setLinvel({
-        x: linvel.x * factor,
-        y: linvel.y,
-        z: linvel.z * factor
-      }, true);
-
-      // Also apply rolling: angular velocity should match linear velocity
-      // For a rolling ball: omega = v / r
-      if (speed > 0.05) {
-        const targetAngVelX = -linvel.z / physRadius; // Rotation around X from Z motion
-        const targetAngVelZ = linvel.x / physRadius;  // Rotation around Z from X motion
-
-        const currentAngVel = ball.body.angvel();
-        // Blend toward proper rolling (gradual correction)
-        const blend = 0.1;
-        ball.body.setAngvel({
-          x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
-          y: currentAngVel.y * 0.95, // Damp vertical spin
-          z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
-        }, true);
-      }
-    } else {
-      // Stop very slow balls completely
+    // Full stop: ball linear and angular speeds are below the allBallsStopped thresholds
+    const angSpeed = Math.sqrt(angvel.x * angvel.x + angvel.z * angvel.z + angvel.y * angvel.y);
+    if (speed < 0.05 && angSpeed < 0.1) {
       ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      const pos = ball.body.translation();
+      if (Math.abs(pos.y - physRadius) > 0.01) {
+        ball.body.setTranslation({ x: pos.x, y: physRadius, z: pos.z }, true);
+      }
+      continue;
     }
 
-    // Keep balls on the table (Y should be at ball radius)
+    let newLinvel = { x: linvel.x, y: linvel.y, z: linvel.z };
+    let newAngvel = { x: angvel.x, y: angvel.y, z: angvel.z };
+
+    if (slip_mag > 0.05) {
+      // --- Sliding phase: kinetic friction opposes contact-point slip ---
+      // This is what converts backspin / topspin into changes in linear velocity.
+      const friction_mag = mu_slide * ballMass * g;
+      const slip_nx = slip_x / slip_mag;
+      const slip_nz = slip_z / slip_mag;
+      const Fx = -slip_nx * friction_mag;
+      const Fz = -slip_nz * friction_mag;
+
+      // Update linear velocity from friction force
+      newLinvel.x += (Fx / ballMass) * dt;
+      newLinvel.z += (Fz / ballMass) * dt;
+
+      // Update angular velocity from friction torque
+      // Torque = r_contact × F = (0, -physRadius, 0) × (Fx, 0, Fz)
+      //        = (-physRadius*Fz, 0, physRadius*Fx)
+      newAngvel.x += (-physRadius * Fz / I) * dt;
+      newAngvel.z += (physRadius * Fx / I) * dt;
+    } else {
+      // --- Rolling phase: small felt friction decelerates the ball ---
+      if (speed > 0.01) {
+        const friction_mag = mu_roll * ballMass * g;
+        const newSpeed = Math.max(0, speed - (friction_mag / ballMass) * dt);
+        const factor = newSpeed / speed;
+        newLinvel.x *= factor;
+        newLinvel.z *= factor;
+      } else {
+        newLinvel.x = 0;
+        newLinvel.z = 0;
+      }
+      // Keep angular velocity locked to linear velocity (true rolling)
+      newAngvel.x = newLinvel.z / physRadius;
+      newAngvel.z = -newLinvel.x / physRadius;
+    }
+
+    // Sidespin (Y-axis rotation) produces a small lateral curl force,
+    // mimicking the friction patch that causes a spinning ball to curve.
+    if (Math.abs(angvel.y) > 0.1 && speed > 0.05) {
+      const perpX = -linvel.z / speed;
+      const perpZ = linvel.x / speed;
+      const sideForce = angvel.y * ballMass * g * 0.01;
+      newLinvel.x += (perpX * sideForce / ballMass) * dt;
+      newLinvel.z += (perpZ * sideForce / ballMass) * dt;
+    }
+    // Decay sidespin gradually (felt contact dissipates Y-axis spin)
+    newAngvel.y *= 0.97;
+
+    ball.body.setLinvel(newLinvel, true);
+    ball.body.setAngvel(newAngvel, true);
+
+    // Keep balls on the table (Y should stay at ball radius)
     const pos = ball.body.translation();
     if (Math.abs(pos.y - physRadius) > 0.01) {
       ball.body.setTranslation({ x: pos.x, y: physRadius, z: pos.z }, true);

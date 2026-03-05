@@ -171,10 +171,20 @@ export function simulateShot(
   const impulseZ = Math.sin(input.angle) * impulseStrength;
 
   cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
-  cueBall.body.applyTorqueImpulse({
-    x: -impulseZ * input.topspin,
+
+  // Set initial angular velocity to rolling speed + spin offset.
+  // Rolling no-slip condition: v_contact = v_linear + omega × r_contact = 0
+  // With r_contact = (0, -physRadius, 0): wx_roll = vz/r, wz_roll = -vx/r
+  // topspin > 0 spins faster than rolling; topspin < 0 spins backward (draw shot)
+  const physRadius = 12 / SCALE;
+  const velocity = cueBall.body.linvel();
+  const wx_roll = velocity.z / physRadius;
+  const wz_roll = -velocity.x / physRadius;
+  const spinMult = 1.0 + input.topspin * 2.0;
+  cueBall.body.setAngvel({
+    x: wx_roll * spinMult,
     y: impulseStrength * input.sidespin,
-    z: impulseX * input.topspin
+    z: wz_roll * spinMult
   }, true);
 
   const allPocketedEvents: PocketedEvent[] = [];

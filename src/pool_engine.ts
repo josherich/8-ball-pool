@@ -918,8 +918,8 @@ class PoolGameEngine {
     const input: ShotInput = {
       angle: this.aimAngle,
       power: this.power,
-      topspin: -this.cueSpinOffset.y * 0.5,
-      sidespin: this.cueSpinOffset.x * 0.5
+      topspin: -this.cueSpinOffset.y,
+      sidespin: this.cueSpinOffset.x
     };
 
     if (this.mode === 'online') {
@@ -946,10 +946,20 @@ class PoolGameEngine {
 
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
 
-    cueBall.body.applyTorqueImpulse({
-      x: -impulseZ * input.topspin,
+    // Set initial angular velocity to rolling speed + spin offset.
+    // Rolling no-slip condition: v_contact = v_linear + omega × r_contact = 0
+    // With r_contact = (0, -physRadius, 0): wx_roll = vz/r, wz_roll = -vx/r
+    // topspin > 0 spins faster than rolling (ball accelerates then rolls smoothly)
+    // topspin < 0 spins backward relative to motion (ball decelerates / draws back)
+    const physRadius = 12 / SCALE;
+    const velocity = cueBall.body.linvel();
+    const wx_roll = velocity.z / physRadius;
+    const wz_roll = -velocity.x / physRadius;
+    const spinMult = 1.0 + input.topspin * 2.0;
+    cueBall.body.setAngvel({
+      x: wx_roll * spinMult,
       y: impulseStrength * input.sidespin,
-      z: impulseX * input.topspin
+      z: wz_roll * spinMult
     }, true);
 
     this.gameStarted = true;
