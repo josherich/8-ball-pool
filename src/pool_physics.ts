@@ -70,10 +70,10 @@ export const setupTable = ({
   const cushionInset = 40; // Distance from edge to visual cushion (pixels)
   const ballRadius = 12;   // Ball radius in pixels
   const cushionThickness = 15; // Cushion thickness in pixels
-  const pocketRadius = 25; // Corner pocket radius in pixels
-  const sidePocketRadius = 22; // Side pocket radius in pixels
-  const cornerPocketGap = 45; // Gap in cushion for corner pockets (pixels)
-  const sidePocketGap = 40;   // Gap for side pockets (pixels)
+  const pocketRadius = 24; // Corner pocket radius in pixels (~4.5" opening per spec)
+  const sidePocketRadius = 27; // Side pocket radius in pixels (~5" opening per spec, larger than corners)
+  const cornerPocketGap = 48; // Gap in cushion for corner pockets (~4.5" per spec)
+  const sidePocketGap = 53;   // Gap for side pockets (~5" per spec, wider than corners)
 
   // Pocket positions (in pixels for rendering)
   const pockets: Pocket[] = [

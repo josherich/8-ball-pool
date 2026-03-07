@@ -1239,67 +1239,114 @@ class PoolGameEngine {
     ctx.lineWidth = 2;
     ctx.strokeRect(60, 60, w - 120, h - 120);
 
-    // Pockets with proper openings
+    // Pockets with shapes based on real pool table specs:
+    // Corner pockets: ~4.5" opening with angled rubber bumper guides
+    // Side pockets: ~5" opening (wider than corners) with flat cushion lips
     this.pockets.forEach((pocket, index) => {
+      const isCorner = index !== 1 && index !== 4;
+      const r = pocket.radius;
+
+      ctx.save();
+
       // Outer pocket rim (dark wood)
       ctx.fillStyle = 'hsl(25, 35%, 15%)';
       ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius + 6, 0, Math.PI * 2);
+      ctx.arc(pocket.x, pocket.y, r + (isCorner ? 7 : 6), 0, Math.PI * 2);
       ctx.fill();
 
       // Pocket opening shadow ring
       ctx.fillStyle = 'hsl(25, 15%, 8%)';
       ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius + 2, 0, Math.PI * 2);
+      ctx.arc(pocket.x, pocket.y, r + 3, 0, Math.PI * 2);
       ctx.fill();
 
-      // Main pocket hole (deep black)
-      const gradient = ctx.createRadialGradient(
-        pocket.x, pocket.y, 0,
-        pocket.x, pocket.y, pocket.radius
-      );
+      // Main pocket hole (deep black radial gradient)
+      const gradient = ctx.createRadialGradient(pocket.x, pocket.y, 0, pocket.x, pocket.y, r);
       gradient.addColorStop(0, 'hsl(0, 0%, 2%)');
       gradient.addColorStop(0.7, 'hsl(0, 0%, 5%)');
       gradient.addColorStop(1, 'hsl(0, 0%, 10%)');
       ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius, 0, Math.PI * 2);
+      ctx.arc(pocket.x, pocket.y, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Inner pocket depth effect
+      // Inner depth
       ctx.fillStyle = 'hsl(0, 0%, 0%)';
       ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius * 0.7, 0, Math.PI * 2);
+      ctx.arc(pocket.x, pocket.y, r * 0.7, 0, Math.PI * 2);
       ctx.fill();
 
-      // Pocket opening highlights (leather/rubber edge)
-      ctx.strokeStyle = 'hsl(25, 25%, 20%)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      // Draw partial arc for 3D effect based on pocket position
-      // Corner pockets (0, 2, 3, 5) get diagonal openings
-      // Side pockets (1, 4) get horizontal openings
-      if (index === 0) { // Top-left corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.75, Math.PI * 1.75);
-      } else if (index === 2) { // Top-right corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.25, Math.PI * 2.25);
-      } else if (index === 3) { // Bottom-left corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.25, Math.PI * 1.25);
-      } else if (index === 5) { // Bottom-right corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * -0.25, Math.PI * 0.75);
-      } else if (index === 1) { // Top-middle
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.1, Math.PI * 1.9);
-      } else if (index === 4) { // Bottom-middle
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.1, Math.PI * 0.9);
+      if (isCorner) {
+        // Corner pocket: two angled rubber bumper guides meeting at ~45° from each cushion wall.
+        // Each bumper runs from the pocket edge inward toward the cushion opening.
+        ctx.strokeStyle = 'hsl(20, 45%, 22%)';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+
+        // Bumper tip (center of the two guides, pointing into playing area)
+        let tipX = pocket.x;
+        let tipY = pocket.y;
+        let arm1X: number, arm1Y: number, arm2X: number, arm2Y: number;
+
+        if (index === 0) {        // Top-left: bumpers point toward bottom-right
+          tipX = pocket.x + r * 0.35; tipY = pocket.y + r * 0.35;
+          arm1X = pocket.x + r * 0.95; arm1Y = pocket.y;           // along top rail
+          arm2X = pocket.x;            arm2Y = pocket.y + r * 0.95; // along left rail
+        } else if (index === 2) { // Top-right: bumpers point toward bottom-left
+          tipX = pocket.x - r * 0.35; tipY = pocket.y + r * 0.35;
+          arm1X = pocket.x - r * 0.95; arm1Y = pocket.y;
+          arm2X = pocket.x;            arm2Y = pocket.y + r * 0.95;
+        } else if (index === 3) { // Bottom-left: bumpers point toward top-right
+          tipX = pocket.x + r * 0.35; tipY = pocket.y - r * 0.35;
+          arm1X = pocket.x + r * 0.95; arm1Y = pocket.y;
+          arm2X = pocket.x;            arm2Y = pocket.y - r * 0.95;
+        } else {                  // Bottom-right (index 5): bumpers point toward top-left
+          tipX = pocket.x - r * 0.35; tipY = pocket.y - r * 0.35;
+          arm1X = pocket.x - r * 0.95; arm1Y = pocket.y;
+          arm2X = pocket.x;            arm2Y = pocket.y - r * 0.95;
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(arm1X, arm1Y);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(arm2X, arm2Y);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+
+      } else {
+        // Side pocket: flat cushion lips on the left and right of the opening,
+        // matching the semi-circular profile from the spec diagram.
+        ctx.strokeStyle = 'hsl(20, 45%, 22%)';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+
+        // Direction of the lip ends (toward playing surface)
+        const lipDY = (index === 1) ? r * 0.55 : -r * 0.55; // top pocket lips go down, bottom go up
+
+        // Left lip
+        ctx.beginPath();
+        ctx.moveTo(pocket.x - r, pocket.y);
+        ctx.lineTo(pocket.x - r * 0.65, pocket.y + lipDY);
+        ctx.stroke();
+
+        // Right lip
+        ctx.beginPath();
+        ctx.moveTo(pocket.x + r, pocket.y);
+        ctx.lineTo(pocket.x + r * 0.65, pocket.y + lipDY);
+        ctx.stroke();
       }
-      ctx.stroke();
 
       // Subtle inner highlight for depth
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(pocket.x - 2, pocket.y - 2, pocket.radius * 0.5, 0, Math.PI * 2);
+      ctx.arc(pocket.x - 2, pocket.y - 2, r * 0.5, 0, Math.PI * 2);
       ctx.stroke();
+
+      ctx.restore();
     });
 
     // Ball shadows (drawn first, below all balls)
