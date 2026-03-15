@@ -33,10 +33,8 @@ export const PHYSICS_DEFAULTS = {
   MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
 } as const;
 
-// Mutable runtime physics config (tunable via debug UI)
 export const physicsConfig = { ...PHYSICS_DEFAULTS };
 
-// Convenience accessors for backward compatibility
 export const BALL_MASS = PHYSICS_DEFAULTS.BALL_MASS;
 export const BALL_RESTITUTION = PHYSICS_DEFAULTS.BALL_RESTITUTION;
 export const BALL_FRICTION = PHYSICS_DEFAULTS.BALL_FRICTION;
@@ -425,6 +423,26 @@ export const checkPockets = ({
 
   return pocketedEvents;
 };
+
+export const syncPhysicsConfig = (balls: Ball[], cushionBodies: RAPIER.RigidBody[]) => {
+  for (const ball of balls) {
+    ball.body.setLinearDamping(physicsConfig.LINEAR_DAMPING);
+    ball.body.setAngularDamping(physicsConfig.ANGULAR_DAMPING);
+    ball.collider.setRestitution(physicsConfig.BALL_RESTITUTION);
+    ball.collider.setFriction(physicsConfig.BALL_FRICTION);
+    ball.collider.setMass(physicsConfig.BALL_MASS);
+  }
+  for (const body of cushionBodies) {
+    for (let i = 0; i < body.numColliders(); i++) {
+      const c = body.collider(i);
+      c.setRestitution(physicsConfig.CUSHION_RESTITUTION);
+      c.setFriction(physicsConfig.CUSHION_FRICTION);
+    }
+  }
+};
+
+export const clonePocketed = (p: Pocketed): Pocketed =>
+  ({ solids: [...p.solids], stripes: [...p.stripes], eight: p.eight });
 
 export const applyRollingFriction = (balls: Ball[], dt: number) => {
   const frictionCoeff = physicsConfig.ROLLING_FRICTION;

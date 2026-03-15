@@ -5,9 +5,12 @@ import {
   type ChangeEvent,
   type PointerEvent as ReactPointerEvent
 } from 'react';
-import { Camera, Users, Copy, Check, RotateCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Copy, Check, RotateCw } from 'lucide-react';
 import RAPIER from '@dimforge/rapier3d-compat';
 import PoolGameEngine from './pool_engine';
+import GameMenu from './components/GameMenu';
+import GameOverOverlay from './components/GameOverOverlay';
+import MobileGameView from './components/MobileGameView';
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 700;
@@ -21,10 +24,9 @@ const getViewport = () => {
 
 const PoolGame = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [gameMode, setGameMode] = useState<string | null>(null); // 'local' or 'online'
-  const [connectionState, setConnectionState] = useState('idle'); // idle, hosting, joining, connected
+  const [gameMode, setGameMode] = useState<string | null>(null);
+  const [connectionState, setConnectionState] = useState('idle');
   const [roomCode, setRoomCode] = useState('');
-  const [inputCode, setInputCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [rapierLoaded, setRapierLoaded] = useState(false);
   const [gameOver, setGameOver] = useState<{ winner: number; reason: string } | null>(null);
@@ -36,11 +38,8 @@ const PoolGame = () => {
   const joinCodeRef = useRef<string | null>(null);
   const aimHoldIntervalRef = useRef<number | null>(null);
 
-  // Initialize Rapier WASM
   useEffect(() => {
-    RAPIER.init().then(() => {
-      setRapierLoaded(true);
-    });
+    RAPIER.init().then(() => { setRapierLoaded(true); });
   }, []);
 
   useEffect(() => {
@@ -54,9 +53,7 @@ const PoolGame = () => {
 
     updateViewport();
     window.addEventListener('resize', updateViewport);
-    return () => {
-      window.removeEventListener('resize', updateViewport);
-    };
+    return () => { window.removeEventListener('resize', updateViewport); };
   }, []);
 
   useEffect(() => {
@@ -71,11 +68,7 @@ const PoolGame = () => {
     });
     gameRef.current.init();
 
-    return () => {
-      if (gameRef.current) {
-        gameRef.current.destroy();
-      }
-    };
+    return () => { gameRef.current?.destroy(); };
   }, [gameMode, rapierLoaded, isMobileDevice]);
 
   const stopAimHold = () => {
@@ -92,11 +85,7 @@ const PoolGame = () => {
     setShotPowerPercent(0);
   };
 
-  useEffect(() => {
-    return () => {
-      stopAimHold();
-    };
-  }, []);
+  useEffect(() => { return () => { stopAimHold(); }; }, []);
 
   const isLandscape = viewport.width >= viewport.height;
   const mobileGameplay = Boolean(gameMode) && isMobileDevice;
@@ -130,9 +119,8 @@ const PoolGame = () => {
     setConnectionState('hosting');
   };
 
-  const handleJoin = () => {
-    if (!inputCode.trim()) return;
-    joinCodeRef.current = inputCode.trim();
+  const handleJoin = (code: string) => {
+    joinCodeRef.current = code;
     setGameMode('online');
     setConnectionState('joining');
   };
@@ -144,9 +132,7 @@ const PoolGame = () => {
     joinCodeRef.current = null;
     setTimeout(() => {
       setGameMode(currentMode);
-      if (currentMode === 'online') {
-        setConnectionState('hosting');
-      }
+      if (currentMode === 'online') setConnectionState('hosting');
     }, 0);
   };
 
@@ -157,7 +143,6 @@ const PoolGame = () => {
     setGameMode(null);
     setConnectionState('idle');
     setRoomCode('');
-    setInputCode('');
     setShotPowerPercent(0);
     setShotSliderActive(false);
     joinCodeRef.current = null;
@@ -217,109 +202,16 @@ const PoolGame = () => {
     cancelShotSlider();
   };
 
+  // --- Render Branches ---
+
   if (!gameMode) {
     return (
-      <div style={{
-        width: '100%',
-        height: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'hsl(25, 15%, 8%)',
-        padding: '1rem'
-      }}>
-        <div style={{ textAlign: 'center', width: '100%', maxWidth: '28rem' }}>
-          <div style={{ marginBottom: '2rem' }}>
-            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎱</div>
-            <h1 style={{
-              fontSize: isMobileDevice ? '2.2rem' : '3rem',
-              fontWeight: 'bold',
-              marginBottom: '0.5rem',
-              color: 'hsl(45, 80%, 65%)'
-            }}>
-              8-Ball Pool
-            </h1>
-            <p style={{ color: '#9ca3af' }}>Premium billiards experience</p>
-          </div>
-
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '1rem',
-            margin: '0 auto'
-          }}>
-            <button
-              onClick={() => setGameMode('local')}
-              style={{
-                width: '100%',
-                padding: '1rem 1.5rem',
-                borderRadius: '0.5rem',
-                fontWeight: '600',
-                fontSize: '1.125rem',
-                background: 'hsl(145, 50%, 28%)',
-                color: 'white',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.5rem'
-              }}
-            >
-              <Users size={24} />
-              Local 2-Player
-            </button>
-
-            <button
-              onClick={handleHost}
-              style={{
-                width: '100%',
-                padding: '1rem 1.5rem',
-                borderRadius: '0.5rem',
-                fontWeight: '600',
-                fontSize: '1.125rem',
-                background: 'hsl(25, 45%, 35%)',
-                color: 'white',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.5rem'
-              }}
-            >
-              <Camera size={24} />
-              Host Online Game
-            </button>
-
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input
-                type="text"
-                placeholder="Enter room code"
-                value={inputCode}
-                onChange={(e) => setInputCode(e.target.value)}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem 1rem',
-                  borderRadius: '0.5rem',
-                  background: '#1f2937',
-                  color: 'white',
-                  border: '1px solid #374151'
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-              />
-              <button
-                onClick={handleJoin}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  borderRadius: '0.5rem',
-                  fontWeight: '600',
-                  background: 'hsl(45, 80%, 65%)',
-                  color: 'hsl(25, 15%, 8%)'
-                }}
-              >
-                Join
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <GameMenu
+        isMobileDevice={isMobileDevice}
+        onStartLocal={() => setGameMode('local')}
+        onHost={handleHost}
+        onJoin={handleJoin}
+      />
     );
   }
 
@@ -357,247 +249,30 @@ const PoolGame = () => {
 
   if (mobileLandscapeGameplay) {
     return (
-      <div style={{
-        width: '100%',
-        height: '100dvh',
-        background: 'hsl(25, 15%, 8%)'
-      }}>
-        <div style={{
-          position: 'relative',
-          width: '100%',
-          height: '100%'
-        }}>
-          <canvas
-            ref={canvasRef}
-            width={CANVAS_WIDTH}
-            height={CANVAS_HEIGHT}
-            style={{
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: `${mobileCanvasDisplayWidth}px`,
-              height: `${mobileCanvasDisplayHeight}px`,
-              display: 'block',
-              border: 'none',
-              borderRadius: 0,
-              touchAction: 'none'
-            }}
-          />
-
-          {connectionState === 'hosting' && roomCode && (
-            <div style={{
-              position: 'absolute',
-              top: '0.6rem',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              padding: '0.4rem 0.6rem',
-              borderRadius: '0.4rem',
-              background: 'rgba(20, 20, 20, 0.55)',
-              color: '#e5e7eb',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem'
-            }}>
-              <span style={{ fontSize: '0.85rem' }}>Room</span>
-              <code style={{ color: 'hsl(45, 80%, 65%)', fontWeight: 700 }}>{roomCode}</code>
-              <button
-                onClick={copyRoomCode}
-                style={{
-                  padding: '0.25rem',
-                  borderRadius: '0.25rem',
-                  color: 'hsl(45, 80%, 65%)',
-                  background: 'transparent'
-                }}
-              >
-                {copied ? <Check size={15} /> : <Copy size={15} />}
-              </button>
-            </div>
-          )}
-
-          {connectionState === 'joining' && (
-            <div style={{
-              position: 'absolute',
-              top: '0.6rem',
-              right: '0.8rem',
-              padding: '0.35rem 0.6rem',
-              borderRadius: '0.35rem',
-              background: 'rgba(20, 20, 20, 0.5)',
-              color: '#d1d5db',
-              fontSize: '0.8rem'
-            }}>
-              Connecting...
-            </div>
-          )}
-
-          <div style={{
-            position: 'absolute',
-            left: '0.5rem',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '0.55rem',
-            background: 'rgba(20, 20, 20, 0.42)',
-            borderRadius: '0.6rem',
-            padding: '0.55rem 0.35rem'
-          }}>
-            <div style={{ color: '#f9fafb', fontSize: '0.72rem', fontWeight: 600 }}>SHOOT</div>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={shotPowerPercent}
-              onChange={handleShotSliderChange}
-              onPointerDown={handleShotSliderPointerDown}
-              onPointerUp={handleShotSliderPointerUp}
-              onPointerCancel={handleShotSliderPointerCancel}
-              style={{
-                WebkitAppearance: 'slider-vertical',
-                writingMode: 'vertical-lr',
-                direction: 'rtl',
-                width: '2.6rem',
-                height: '48vh',
-                accentColor: 'hsl(45, 80%, 65%)',
-                touchAction: 'none'
-              }}
-            />
-            <div style={{ color: '#f9fafb', fontSize: '0.72rem' }}>{shotPowerPercent}%</div>
-          </div>
-
-          <div style={{
-            position: 'absolute',
-            right: '0.5rem',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.5rem'
-          }}>
-            <button
-              onPointerDown={handleAimHoldStart(-1)}
-              onPointerUp={handleAimHoldEnd}
-              onPointerLeave={handleAimHoldEnd}
-              onPointerCancel={handleAimHoldEnd}
-              style={{
-                width: '4.3rem',
-                height: '3.1rem',
-                borderRadius: '0.55rem',
-                background: 'rgba(20, 20, 20, 0.58)',
-                color: '#f3f4f6',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.2rem',
-                fontWeight: 700,
-                touchAction: 'none'
-              }}
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <button
-              onPointerDown={handleAimHoldStart(1)}
-              onPointerUp={handleAimHoldEnd}
-              onPointerLeave={handleAimHoldEnd}
-              onPointerCancel={handleAimHoldEnd}
-              style={{
-                width: '4.3rem',
-                height: '3.1rem',
-                borderRadius: '0.55rem',
-                background: 'rgba(20, 20, 20, 0.58)',
-                color: '#f3f4f6',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.2rem',
-                fontWeight: 700,
-                touchAction: 'none'
-              }}
-            >
-              <ChevronRight size={20} />
-            </button>
-          </div>
-
-          {gameOver && (
-            <div style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(0, 0, 0, 0.75)'
-            }}>
-              <div style={{ textAlign: 'center', padding: '1rem' }}>
-                <h2 style={{
-                  fontSize: '2rem',
-                  fontWeight: 'bold',
-                  color: 'hsl(45, 80%, 65%)',
-                  marginBottom: '0.5rem'
-                }}>
-                  Game Over
-                </h2>
-                <p style={{
-                  fontSize: '1.2rem',
-                  color: 'white',
-                  marginBottom: '0.5rem'
-                }}>
-                  {gameMode === 'online'
-                    ? (gameOver.winner === (gameRef.current?.isHost ? 1 : 2)
-                      ? 'You Win!'
-                      : 'You Lose!')
-                    : `Player ${gameOver.winner} Wins!`}
-                </p>
-                <p style={{
-                  fontSize: '1rem',
-                  color: '#9ca3af',
-                  marginBottom: '1.1rem'
-                }}>
-                  {gameOver.reason}
-                </p>
-                <div style={{
-                  display: 'flex',
-                  gap: '0.6rem',
-                  justifyContent: 'center',
-                  flexWrap: 'wrap'
-                }}>
-                  <button
-                    onClick={handlePlayAgain}
-                    style={{
-                      padding: '0.75rem 1.4rem',
-                      borderRadius: '0.5rem',
-                      fontWeight: '600',
-                      fontSize: '1.05rem',
-                      background: 'hsl(145, 50%, 28%)',
-                      color: 'white',
-                      border: 'none'
-                    }}
-                  >
-                    Play Again
-                  </button>
-                  <button
-                    onClick={handleBackToMenu}
-                    style={{
-                      padding: '0.75rem 1.4rem',
-                      borderRadius: '0.5rem',
-                      fontWeight: '600',
-                      fontSize: '1.05rem',
-                      background: 'hsl(25, 45%, 35%)',
-                      color: 'white',
-                      border: 'none'
-                    }}
-                  >
-                    Main Menu
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <MobileGameView
+        canvasRef={canvasRef}
+        canvasWidth={CANVAS_WIDTH}
+        canvasHeight={CANVAS_HEIGHT}
+        displayWidth={mobileCanvasDisplayWidth}
+        displayHeight={mobileCanvasDisplayHeight}
+        connectionState={connectionState}
+        roomCode={roomCode}
+        copied={copied}
+        onCopyRoomCode={copyRoomCode}
+        shotPowerPercent={shotPowerPercent}
+        shotSliderActive={shotSliderActive}
+        onShotSliderPointerDown={handleShotSliderPointerDown}
+        onShotSliderChange={handleShotSliderChange}
+        onShotSliderPointerUp={handleShotSliderPointerUp}
+        onShotSliderPointerCancel={handleShotSliderPointerCancel}
+        onAimHoldStart={handleAimHoldStart}
+        onAimHoldEnd={handleAimHoldEnd}
+        gameOver={gameOver}
+        gameMode={gameMode}
+        gameRef={gameRef}
+        onPlayAgain={handlePlayAgain}
+        onBackToMenu={handleBackToMenu}
+      />
     );
   }
 
@@ -648,9 +323,7 @@ const PoolGame = () => {
       )}
 
       {connectionState === 'joining' && (
-        <div style={{ color: '#d1d5db' }}>
-          Connecting to game...
-        </div>
+        <div style={{ color: '#d1d5db' }}>Connecting to game...</div>
       )}
 
       {connectionState === 'connected' && (
@@ -680,89 +353,17 @@ const PoolGame = () => {
         />
 
         {gameOver && (
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(0, 0, 0, 0.75)',
-            borderRadius: '0.5rem'
-          }}>
-            <div style={{ textAlign: 'center', padding: '1rem' }}>
-              <h2 style={{
-                fontSize: '3rem',
-                fontWeight: 'bold',
-                color: 'hsl(45, 80%, 65%)',
-                marginBottom: '0.5rem'
-              }}>
-                Game Over
-              </h2>
-              <p style={{
-                fontSize: '1.5rem',
-                color: 'white',
-                marginBottom: '0.5rem'
-              }}>
-                {gameMode === 'online'
-                  ? (gameOver.winner === (gameRef.current?.isHost ? 1 : 2)
-                    ? 'You Win!'
-                    : 'You Lose!')
-                  : `Player ${gameOver.winner} Wins!`}
-              </p>
-              <p style={{
-                fontSize: '1rem',
-                color: '#9ca3af',
-                marginBottom: '1.2rem'
-              }}>
-                {gameOver.reason}
-              </p>
-              <div style={{
-                display: 'flex',
-                gap: '0.6rem',
-                justifyContent: 'center',
-                flexWrap: 'wrap'
-              }}>
-                <button
-                  onClick={handlePlayAgain}
-                  style={{
-                    padding: '0.75rem 1.4rem',
-                    borderRadius: '0.5rem',
-                    fontWeight: '600',
-                    fontSize: '1.05rem',
-                    background: 'hsl(145, 50%, 28%)',
-                    color: 'white',
-                    border: 'none'
-                  }}
-                >
-                  Play Again
-                </button>
-                <button
-                  onClick={handleBackToMenu}
-                  style={{
-                    padding: '0.75rem 1.4rem',
-                    borderRadius: '0.5rem',
-                    fontWeight: '600',
-                    fontSize: '1.05rem',
-                    background: 'hsl(25, 45%, 35%)',
-                    color: 'white',
-                    border: 'none'
-                  }}
-                >
-                  Main Menu
-                </button>
-              </div>
-            </div>
-          </div>
+          <GameOverOverlay
+            gameOver={gameOver}
+            gameMode={gameMode}
+            gameRef={gameRef}
+            onPlayAgain={handlePlayAgain}
+            onBackToMenu={handleBackToMenu}
+          />
         )}
       </div>
 
-      <div style={{
-        color: '#9ca3af',
-        fontSize: '0.875rem'
-      }}>
+      <div style={{ color: '#9ca3af', fontSize: '0.875rem' }}>
         {gameMode === 'local' ? 'Local 2-Player Mode' : 'Online Multiplayer Mode'}
       </div>
     </div>
