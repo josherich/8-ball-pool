@@ -58,7 +58,7 @@ function findTargetBall(
     if (perpDist < collisionDist) {
       const backDist = Math.sqrt(collisionDist * collisionDist - perpDist * perpDist);
       const actualDist = projDist - backDist;
-      if (actualDist > ballRadius && actualDist < closestDist) {
+      if (actualDist > 0 && actualDist < closestDist) {
         closestDist = actualDist;
         closestBall = { x: targetX, y: targetY };
       }

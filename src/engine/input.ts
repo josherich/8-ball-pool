@@ -114,10 +114,13 @@ export class InputHandler {
   updateMousePosFromClient(clientX: number, clientY: number) {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    const scaleX = this.canvas.width / rect.width;
-    const scaleY = this.canvas.height / rect.height;
-    this.mousePos.x = (clientX - rect.left) * scaleX;
-    this.mousePos.y = (clientY - rect.top) * scaleY;
+    // Account for canvas border (clientLeft/clientTop = border width)
+    const borderLeft = this.canvas.clientLeft;
+    const borderTop = this.canvas.clientTop;
+    const scaleX = this.canvas.width / this.canvas.clientWidth;
+    const scaleY = this.canvas.height / this.canvas.clientHeight;
+    this.mousePos.x = (clientX - rect.left - borderLeft) * scaleX;
+    this.mousePos.y = (clientY - rect.top - borderTop) * scaleY;
   }
 
   private updateAimFromMousePosition() {

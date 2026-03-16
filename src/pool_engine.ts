@@ -339,6 +339,10 @@ class PoolGameEngine {
     this.shotInProgress = true;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
 
+    // Zero out any residual velocity before applying shot impulse
+    cueBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    cueBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+
     const impulseStrength = input.power * 8;
     const impulseX = Math.cos(input.angle) * impulseStrength;
     const impulseZ = Math.sin(input.angle) * impulseStrength;
