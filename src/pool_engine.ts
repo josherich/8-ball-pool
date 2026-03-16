@@ -1,5 +1,4 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
-import SimplePeer from 'simple-peer';
 import {
   physicsConfig,
   SCALE,
@@ -9,9 +8,10 @@ import {
   setupBalls,
   checkPockets,
   applyRollingFriction,
+  syncPhysicsConfig,
+  clonePocketed,
   type Ball,
   type Pocket,
-  type PocketedEvent,
   type Pocketed,
   type PocketedThisShot
 } from './pool_physics';
@@ -25,279 +25,98 @@ import {
   hashGameState,
   restoreBallStates
 } from './pool_sync';
-import cueStrikeSfx from './pool-sounds/cue_strike.mp3';
-import breakShotBigSfx from './pool-sounds/break_shot_big.mp3';
-import breakShotSmallSfx from './pool-sounds/break_shot_small.mp3';
-import ballCollisionSfx from './pool-sounds/ball_collision.mp3';
-import ballCollisionAltSfx from './pool-sounds/ball_collision_alt.mp3';
-import cushionHitSfx from './pool-sounds/cushion_hit.mp3';
-import foulDingSfx from './pool-sounds/foul_ding.mp3';
-
-type PocketingAnimation = PocketedEvent & {
-  startTime: number;
-  duration: number;
-};
-
-type SoundName =
-  | 'cueStrike'
-  | 'breakShot'
-  | 'gameOpening'
-  | 'ballCollision'
-  | 'ballCollisionAlt'
-  | 'cushionHit'
-  | 'foulDing';
-
-type AudioPool = {
-  clips: HTMLAudioElement[];
-  index: number;
-  baseVolume: number;
-};
+import { AudioManager } from './engine/audio';
+import { NetworkManager } from './engine/networking';
+import { InputHandler } from './engine/input';
+import { PoolRenderer, type PocketingAnimation } from './engine/renderer';
+import { isWithinCueSpinControl, computeCueSpinOffset } from './engine/cue_spin';
 
 class PoolGameEngine {
   canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
   mode: string;
   RAPIER: typeof RAPIER;
   callbacks: any;
-  world: RAPIER.World | null;
-  balls: Ball[];
-  cushionBodies: RAPIER.RigidBody[];
-  currentPlayer: number;
-  aiming: boolean;
-  aimAngle: number;
-  power: number;
-  powerIncreasing: boolean;
-  scores: { player1: number; player2: number };
-  gameStarted: boolean;
-  pocketed: Pocketed;
-  playerTypes: { player1: string | null; player2: string | null };
-  mousePos: { x: number; y: number };
-  isMyTurn: boolean;
-  peer: SimplePeer.Instance | null;
-  connection: any;
-  animationId: number | null;
-  ws: WebSocket | null;
-  roomCode: string | null;
-  clientId: string | null;
-  pockets: Pocket[];
-  shotInProgress: boolean;
-  pocketedThisShot: PocketedThisShot;
-  pocketingAnimations: PocketingAnimation[];
-  joinCode: string | null;
-  isHost: boolean;
-  accumulator: number;
-  lastTime: number;
-  lastHash: string | null;
-  lastSnapshot: GameStateSnapshot | null;
-  pendingPeerHash: string | null;
-  ballInHand: boolean;
-  debugUI: DebugUI | null;
-  cleanupTripleSlash: (() => void) | null;
-  cueSpinOffset: { x: number; y: number };
-  draggingCueSpin: boolean;
-  cueControlExpanded: boolean;
-  eventQueue: RAPIER.EventQueue | null;
-  audioPool: Record<SoundName, AudioPool | null>;
-  audioUnlocked: boolean;
-  openingSoundPending: boolean;
-  lastBallCollisionSoundMs: number;
-  lastCushionHitSoundMs: number;
-  cleanupInputListeners: (() => void) | null;
+  world: RAPIER.World | null = null;
+  balls: Ball[] = [];
+  cushionBodies: RAPIER.RigidBody[] = [];
+  currentPlayer = 1;
+  aiming = false;
+  aimAngle = 0;
+  power = 0;
+  powerIncreasing = false;
+  gameStarted = false;
+  pocketed: Pocketed = { solids: [], stripes: [], eight: false };
+  playerTypes: { player1: string | null; player2: string | null } = { player1: null, player2: null };
+  isMyTurn = true;
+  animationId: number | null = null;
+  pockets: Pocket[] = [];
+  shotInProgress = false;
+  pocketedThisShot: PocketedThisShot = { solids: [], stripes: [], cueBall: false };
+  pocketingAnimations: PocketingAnimation[] = [];
+  isHost = true;
+  accumulator = 0;
+  lastTime = 0;
+  lastHash: string | null = null;
+  lastSnapshot: GameStateSnapshot | null = null;
+  pendingPeerHash: string | null = null;
+  ballInHand = false;
+  debugUI: DebugUI | null = null;
+  cleanupTripleSlash: (() => void) | null = null;
+  cueSpinOffset = { x: 0, y: 0 };
+  draggingCueSpin = false;
+  cueControlExpanded = false;
+  eventQueue: RAPIER.EventQueue | null = null;
   mobileTouchControlsEnabled: boolean;
-  touchAimDragActive: boolean;
-  touchAimLastAngle: number;
+  private audio: AudioManager;
+  private network: NetworkManager;
+  private input: InputHandler;
+  private renderer: PoolRenderer;
+  private joinCode: string | null;
 
   constructor(canvas: HTMLCanvasElement, mode: string, rapier: typeof RAPIER, callbacks: any) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d')!;
     this.mode = mode;
     this.RAPIER = rapier;
     this.callbacks = callbacks;
-    this.world = null;
-    this.balls = [];
-    this.cushionBodies = [];
-    this.currentPlayer = 1;
-    this.aiming = false;
-    this.aimAngle = 0;
-    this.power = 0;
-    this.powerIncreasing = false;
-    this.scores = { player1: 0, player2: 0 };
-    this.gameStarted = false;
-    this.pocketed = { solids: [], stripes: [], eight: false };
-    this.playerTypes = { player1: null, player2: null };
-    this.mousePos = { x: 0, y: 0 };
-    this.isMyTurn = true;
-    this.peer = null;
-    this.connection = null;
-    this.animationId = null;
-    this.ws = null;
-    this.roomCode = null;
-    this.clientId = null;
-    this.pockets = [];
-    this.shotInProgress = false;
-    this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
-    this.pocketingAnimations = [];
     this.joinCode = callbacks.joinCode || null;
-    this.isHost = true;
-    this.accumulator = 0;
-    this.lastTime = 0;
-    this.lastHash = null;
-    this.lastSnapshot = null;
-    this.pendingPeerHash = null;
-    this.ballInHand = false;
-    this.debugUI = null;
-    this.cleanupTripleSlash = null;
-    this.cueSpinOffset = { x: 0, y: 0 };
-    this.draggingCueSpin = false;
-    this.cueControlExpanded = false;
-    this.eventQueue = null;
-    this.audioPool = this.createAudioPools();
-    this.audioUnlocked = false;
-    this.openingSoundPending = false;
-    this.lastBallCollisionSoundMs = 0;
-    this.lastCushionHitSoundMs = 0;
-    this.cleanupInputListeners = null;
     this.mobileTouchControlsEnabled = Boolean(callbacks.mobileTouchControlsEnabled);
-    this.touchAimDragActive = false;
-    this.touchAimLastAngle = 0;
-  }
 
-  createAudioPool(src: string, volume: number, size: number): AudioPool | null {
-    if (typeof Audio === 'undefined') return null;
-    const clips: HTMLAudioElement[] = [];
-    for (let i = 0; i < size; i++) {
-      const clip = new Audio(src);
-      clip.preload = 'auto';
-      clip.volume = volume;
-      clips.push(clip);
-    }
-    return { clips, index: 0, baseVolume: volume };
-  }
+    this.audio = new AudioManager();
 
-  createAudioPools(): Record<SoundName, AudioPool | null> {
-    return {
-      cueStrike: this.createAudioPool(cueStrikeSfx, 0.5, 1),
-      breakShot: this.createAudioPool(breakShotBigSfx, 0.56, 1),
-      gameOpening: this.createAudioPool(breakShotSmallSfx, 0.42, 1),
-      ballCollision: this.createAudioPool(ballCollisionSfx, 0.33, 2),
-      ballCollisionAlt: this.createAudioPool(ballCollisionAltSfx, 0.3, 2),
-      cushionHit: this.createAudioPool(cushionHitSfx, 0.28, 2),
-      foulDing: this.createAudioPool(foulDingSfx, 0.5, 1)
-    };
-  }
-
-  playSound(sound: SoundName, playbackRate: number = 1, onBlocked?: () => void, volumeScale: number = 1) {
-    const pool = this.audioPool[sound];
-    if (!pool) return;
-
-    const clip = pool.clips[pool.index];
-    pool.index = (pool.index + 1) % pool.clips.length;
-
-    clip.currentTime = 0;
-    clip.volume = Math.max(0, Math.min(pool.baseVolume * volumeScale, 1));
-    clip.playbackRate = playbackRate;
-
-    const playback = clip.play();
-    if (playback && typeof playback.catch === 'function') {
-      playback.catch(() => {
-        onBlocked?.();
-      });
-    }
-  }
-
-  unlockAudio() {
-    if (this.audioUnlocked) return;
-    this.audioUnlocked = true;
-    for (const pool of Object.values(this.audioPool)) {
-      if (!pool) continue;
-      const clip = pool.clips[0];
-      const savedVolume = clip.volume;
-      clip.volume = 0;
-      const p = clip.play();
-      if (p) {
-        p.then(() => {
-          clip.pause();
-          clip.currentTime = 0;
-          clip.volume = savedVolume;
-        }).catch(() => {});
-      }
-    }
-  }
-
-  playOpeningSound() {
-    this.openingSoundPending = false;
-    this.playSound('gameOpening', 1, () => {
-      this.openingSoundPending = true;
+    this.network = new NetworkManager({
+      onConnectionStateChange: callbacks.onConnectionStateChange,
+      onRoomCodeGenerated: callbacks.onRoomCodeGenerated,
+      onGameMessage: (msg) => this.handleGameMessage(msg)
     });
-  }
 
-  playShotSound(isBreakShot: boolean, shotPower: number) {
-    const playbackRate = 0.96 + Math.random() * 0.08;
-    const normalizedPower = Math.max(0, Math.min(shotPower / physicsConfig.MAX_SHOT_POWER, 1));
-    const volumeScale = 0.35 + normalizedPower * 0.9;
-    this.playSound(isBreakShot ? 'breakShot' : 'cueStrike', playbackRate, undefined, volumeScale);
-  }
-
-  processCollisionEvents() {
-    if (!this.eventQueue || !this.world) return;
-
-    const ballHandles = new Set(this.balls.map(ball => ball.collider.handle));
-    this.eventQueue.drainCollisionEvents((handle1, handle2, started) => {
-      if (!started) return;
-
-      const handle1IsBall = ballHandles.has(handle1);
-      const handle2IsBall = ballHandles.has(handle2);
-      if (!handle1IsBall && !handle2IsBall) return;
-
-      const now = performance.now();
-      const collider1 = this.world!.getCollider(handle1);
-      const collider2 = this.world!.getCollider(handle2);
-      const body1 = collider1.parent();
-      const body2 = collider2.parent();
-
-      if (handle1IsBall && handle2IsBall) {
-        if (now - this.lastBallCollisionSoundMs < 45) return;
-        const linvel1 = body1?.linvel();
-        const linvel2 = body2?.linvel();
-        const relativeSpeed = linvel1 && linvel2
-          ? Math.hypot(
-              linvel1.x - linvel2.x,
-              linvel1.y - linvel2.y,
-              linvel1.z - linvel2.z
-            )
-          : 0;
-        const collisionSpeed = Math.min(relativeSpeed, 24);
-        const normalizedCollisionSpeed = collisionSpeed / 24;
-        const volumeScale = 0.04 + Math.pow(normalizedCollisionSpeed, 1.75) * 0.96;
-        const collisionSound = Math.random() < 0.5 ? 'ballCollision' : 'ballCollisionAlt';
-        this.playSound(collisionSound, 0.94 + Math.random() * 0.12, undefined, volumeScale);
-        this.lastBallCollisionSoundMs = now;
-        return;
-      }
-
-      const handle1IsFixed = collider1.parent()?.isFixed() ?? false;
-      const handle2IsFixed = collider2.parent()?.isFixed() ?? false;
-      const isCushionCollision =
-        (handle1IsBall && handle2IsFixed) ||
-        (handle2IsBall && handle1IsFixed);
-
-      if (!isCushionCollision || now - this.lastCushionHitSoundMs < 70) return;
-
-      const ballSpeed = handle1IsBall
-        ? body1?.linvel()
-        : body2?.linvel();
-      const speed = ballSpeed ? Math.hypot(ballSpeed.x, ballSpeed.y, ballSpeed.z) : 0;
-      const clampedSpeed = Math.min(speed, 20);
-      const normalizedCushionSpeed = clampedSpeed / 20;
-      const volumeScale = 0.03 + Math.pow(normalizedCushionSpeed, 1.9) * 0.9;
-
-      this.playSound('cushionHit', 0.95 + Math.random() * 0.1, undefined, volumeScale);
-      this.lastCushionHitSoundMs = now;
+    this.input = new InputHandler(canvas, {
+      canShoot: () => this.canShoot(),
+      getBalls: () => this.balls,
+      getAimAngle: () => this.aimAngle,
+      setAimAngle: (angle) => { this.aimAngle = angle; },
+      isAiming: () => this.aiming,
+      isBallInHand: () => this.ballInHand,
+      isCueControlExpanded: () => this.cueControlExpanded,
+      setCueControlExpanded: (v) => { this.cueControlExpanded = v; },
+      isWithinCueSpinControl: (x, y, expanded) => isWithinCueSpinControl(x, y, this.canvas.width, this.canvas.height, expanded),
+      updateCueSpinOffset: (x, y, expanded) => { this.cueSpinOffset = computeCueSpinOffset(x, y, this.canvas.width, this.canvas.height, expanded); },
+      isDraggingCueSpin: () => this.draggingCueSpin,
+      setDraggingCueSpin: (v) => { this.draggingCueSpin = v; },
+      startPowerShot: () => this.startPowerShot(),
+      releasePowerShot: () => this.releasePowerShot(),
+      cancelPowerShot: () => this.cancelPowerShot(),
+      placeBallInHand: () => this.placeBallInHand(),
+      unlockAudio: () => this.audio.unlock(),
+      onOpeningSoundCheck: () => {
+        if (this.audio.isOpeningPending) this.audio.playOpening();
+      },
+      mobileTouchControlsEnabled: this.mobileTouchControlsEnabled
     });
+
+    this.renderer = new PoolRenderer(canvas);
   }
 
   init() {
-    // Create physics world with no gravity (pool table is horizontal)
     this.world = createWorld(this.RAPIER);
     this.eventQueue = new this.RAPIER.EventQueue(true);
 
@@ -310,172 +129,27 @@ class PoolGameEngine {
     this.pockets = pockets;
     this.cushionBodies = cushionBodies;
     this.balls = setupBalls({ canvas: this.canvas, world: this.world, RAPIER: this.RAPIER });
-    this.setupEventListeners();
+    this.input.attach();
 
-    // Debug UI for tuning physics parameters (toggle with '/' pressed 3 times)
     this.debugUI = createDebugUI();
     this.cleanupTripleSlash = setupTripleSlashToggle(() => {
       this.debugUI?.toggle();
     });
 
     if (this.mode === 'online' && !this.joinCode) {
-      this.setupWebRTC();
+      this.network.setupAsHost();
     } else if (this.mode === 'online' && this.joinCode) {
-      this.joinRoom(this.joinCode);
+      this.isHost = false;
+      this.isMyTurn = false;
+      this.network.joinRoom(this.joinCode);
     }
 
-    this.openingSoundPending = true;
-    this.playOpeningSound();
+    this.audio.isOpeningPending = true;
+    this.audio.playOpening();
     this.gameLoop();
   }
 
-  setupWebRTC() {
-    this.isHost = true;
-    // Connect to signaling server
-    const SIGNALING_SERVER = 'ws://localhost:8080';
-    this.ws = new WebSocket(SIGNALING_SERVER);
-
-    this.ws.onopen = () => {
-      console.log('Connected to signaling server');
-      // Request to create a room
-      this.ws!.send(JSON.stringify({ type: 'create-room' }));
-    };
-
-    this.ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      this.handleSignalingMessage(message, true);
-    };
-
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      this.callbacks.onConnectionStateChange('error');
-    };
-
-    this.ws.onclose = () => {
-      console.log('Disconnected from signaling server');
-    };
-  }
-
-  joinRoom(code: string) {
-    this.isHost = false;
-    this.isMyTurn = false;
-    this.callbacks.onConnectionStateChange('joining');
-
-    // Connect to signaling server
-    const SIGNALING_SERVER = 'ws://localhost:8080';
-    this.ws = new WebSocket(SIGNALING_SERVER);
-
-    this.ws.onopen = () => {
-      console.log('Connected to signaling server');
-      // Request to join the room
-      this.ws!.send(JSON.stringify({ type: 'join-room', roomCode: code }));
-    };
-
-    this.ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      this.handleSignalingMessage(message, false);
-    };
-
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      this.callbacks.onConnectionStateChange('error');
-    };
-
-    this.ws.onclose = () => {
-      console.log('Disconnected from signaling server');
-    };
-  }
-
-  handleSignalingMessage(message: any, _isHost: boolean) {
-    switch (message.type) {
-      case 'room-created':
-        this.roomCode = message.roomCode;
-        this.clientId = message.clientId;
-        this.callbacks.onRoomCodeGenerated(message.roomCode);
-        console.log('Room created:', message.roomCode);
-        // Host creates peer connection and waits for guest
-        this.initializePeerConnection(true);
-        break;
-
-      case 'room-joined':
-        this.roomCode = message.roomCode;
-        this.clientId = message.clientId;
-        console.log('Joined room:', message.roomCode);
-        // Guest creates peer connection and initiates connection
-        this.callbacks.onConnectionStateChange('connected'); // Guest is connected to host, will establish WebRTC connection next
-        this.initializePeerConnection(false);
-        break;
-
-      case 'peer-connected':
-        console.log('Peer connected to room');
-        // Host knows guest has joined, connection will be established via WebRTC signaling
-        break;
-
-      case 'signal':
-        // Forward WebRTC signal to peer connection
-        if (this.peer && message.signal) {
-          this.peer.signal(message.signal);
-        }
-        break;
-
-      case 'error':
-        console.error('Signaling error:', message.error);
-        this.callbacks.onConnectionStateChange('error');
-        break;
-    }
-  }
-
-  initializePeerConnection(isHost: boolean) {
-    // Create SimplePeer instance
-    this.peer = new SimplePeer({
-      initiator: !isHost, // Guest initiates the connection
-      trickle: true,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
-    });
-
-    // Handle signaling data (SDP offers/answers, ICE candidates)
-    this.peer.on('signal', (data) => {
-      console.log('Sending signal data');
-      if (this.ws && this.roomCode) {
-        this.ws.send(JSON.stringify({
-          type: 'signal',
-          roomCode: this.roomCode,
-          signal: data
-        }));
-      }
-    });
-
-    // Handle connection establishment
-    this.peer.on('connect', () => {
-      console.log('WebRTC connection established!');
-      this.callbacks.onConnectionStateChange('connected');
-    });
-
-    // Handle incoming data
-    this.peer.on('data', (data) => {
-      const message = JSON.parse(data.toString());
-      this.handleGameMessage(message);
-    });
-
-    // Handle errors
-    this.peer.on('error', (err) => {
-      console.error('Peer connection error:', err);
-      this.callbacks.onConnectionStateChange('error');
-    });
-
-    // Handle close
-    this.peer.on('close', () => {
-      console.log('Peer connection closed');
-      this.callbacks.onConnectionStateChange('idle');
-    });
-  }
-
-  handleGameMessage(message: GameMessage) {
+  private handleGameMessage(message: GameMessage) {
     switch (message.type) {
       case 'shot':
         this.applyShot(message.input);
@@ -491,14 +165,8 @@ class PoolGameEngine {
 
       case 'state_sync':
         if (!this.isHost && this.world) {
-          this.balls = restoreBallStates(
-            this.world, this.balls, message.snapshot, this.RAPIER
-          );
-          this.pocketed = {
-            solids: [...message.snapshot.pocketed.solids],
-            stripes: [...message.snapshot.pocketed.stripes],
-            eight: message.snapshot.pocketed.eight
-          };
+          this.balls = restoreBallStates(this.world, this.balls, message.snapshot, this.RAPIER);
+          this.pocketed = clonePocketed(message.snapshot.pocketed);
         }
         break;
 
@@ -506,11 +174,7 @@ class PoolGameEngine {
         if (!this.isHost) {
           this.currentPlayer = message.state.currentPlayer;
           this.playerTypes = { ...message.state.playerTypes };
-          this.pocketed = {
-            solids: [...message.state.pocketed.solids],
-            stripes: [...message.state.pocketed.stripes],
-            eight: message.state.pocketed.eight
-          };
+          this.pocketed = clonePocketed(message.state.pocketed);
           this.isMyTurn = this.currentPlayer === 2;
         }
         break;
@@ -533,112 +197,66 @@ class PoolGameEngine {
     }
   }
 
-  handleStateHashComparison(peerHash: string) {
+  private handleStateHashComparison(peerHash: string) {
     if (!this.lastHash) return;
-
     if (this.lastHash !== peerHash) {
       console.warn('State hash mismatch!', this.lastHash, 'vs', peerHash);
       if (this.isHost && this.lastSnapshot) {
-        this.sendGameMessage({ type: 'state_sync', snapshot: this.lastSnapshot });
+        this.network.send({ type: 'state_sync', snapshot: this.lastSnapshot });
       }
     }
   }
 
-  sendGameMessage(message: GameMessage) {
-    if (this.peer && this.peer.connected) {
-      this.peer.send(JSON.stringify(message));
-    }
+  canShoot(): boolean {
+    if (this.ballInHand) return false;
+    return canShoot({ mode: this.mode, isMyTurn: this.isMyTurn, balls: this.balls });
   }
 
-  updateMousePosFromClient(clientX: number, clientY: number) {
-    const rect = this.canvas.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    const scaleX = this.canvas.width / rect.width;
-    const scaleY = this.canvas.height / rect.height;
-    this.mousePos.x = (clientX - rect.left) * scaleX;
-    this.mousePos.y = (clientY - rect.top) * scaleY;
-  }
-
-  updateAimFromMousePosition() {
-    if (this.draggingCueSpin) {
-      this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
-      return;
-    }
-
-    if (this.canShoot() && !this.aiming) {
-      const cueBall = this.balls.find(b => b.type === 'cue');
-      if (cueBall) {
-        const ballPos = cueBall.body.translation();
-        const ballPixelX = ballPos.x * SCALE;
-        const ballPixelY = ballPos.z * SCALE; // Z is our "Y" in 2D view
-
-        this.aimAngle = Math.atan2(
-          this.mousePos.y - ballPixelY,
-          this.mousePos.x - ballPixelX
-        );
-      }
-    }
-  }
-
-  getCueBallPixelPosition(): { x: number; y: number } | null {
-    const cueBall = this.balls.find(b => b.type === 'cue');
-    if (!cueBall) return null;
-    const ballPos = cueBall.body.translation();
+  private getTableBounds() {
+    const cushionInset = 40;
+    const ballRadius = 12;
+    const physBallRadius = ballRadius / SCALE;
+    const physCushionInset = cushionInset / SCALE;
     return {
-      x: ballPos.x * SCALE,
-      y: ballPos.z * SCALE
+      tableLeft: physCushionInset + physBallRadius,
+      tableRight: this.canvas.width / SCALE - physCushionInset - physBallRadius,
+      tableTop: physCushionInset + physBallRadius,
+      tableBottom: this.canvas.height / SCALE - physCushionInset - physBallRadius,
+      ballRadius: physBallRadius
     };
   }
 
-  getTouchAimSpeedFactor(distance: number): number {
-    const nearDistance = 60;
-    const farDistance = 520;
-    const maxFactor = 0.9;
-    const minFactor = 0.22;
-    const t = Math.min(Math.max((distance - nearDistance) / (farDistance - nearDistance), 0), 1);
-    return maxFactor - t * (maxFactor - minFactor);
+  private placeBallInHand() {
+    if (!this.ballInHand) return;
+    if (this.mode === 'online' && !this.isMyTurn) return;
+
+    const physX = this.input.mousePos.x / SCALE;
+    const physZ = this.input.mousePos.y / SCALE;
+    const bounds = this.getTableBounds();
+
+    const ballPositions = this.balls
+      .filter(b => b.type !== 'cue')
+      .map(b => {
+        const pos = b.body.translation();
+        return { x: pos.x, z: pos.z };
+      });
+
+    if (!isValidBallPlacement({ physX, physZ, ballPositions, ...bounds })) return;
+
+    const cueBall = this.balls.find(b => b.type === 'cue');
+    if (!cueBall) return;
+
+    cueBall.body.setTranslation({ x: physX, y: bounds.ballRadius, z: physZ }, true);
+    cueBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    cueBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.ballInHand = false;
+
+    if (this.mode === 'online') {
+      this.network.send({ type: 'ball_in_hand_place', position: { x: physX, z: physZ } });
+    }
   }
 
-  beginTouchAimDrag() {
-    if (!this.mobileTouchControlsEnabled || this.aiming || !this.canShoot()) return;
-    const cueBallPos = this.getCueBallPixelPosition();
-    if (!cueBallPos) return;
-
-    this.touchAimDragActive = true;
-    this.touchAimLastAngle = Math.atan2(
-      this.mousePos.y - cueBallPos.y,
-      this.mousePos.x - cueBallPos.x
-    );
-  }
-
-  updateTouchAimDragFromMousePosition() {
-    if (!this.touchAimDragActive || this.aiming || !this.canShoot()) return;
-    const cueBallPos = this.getCueBallPixelPosition();
-    if (!cueBallPos) return;
-
-    const nextTouchAngle = Math.atan2(
-      this.mousePos.y - cueBallPos.y,
-      this.mousePos.x - cueBallPos.x
-    );
-    const delta = Math.atan2(
-      Math.sin(nextTouchAngle - this.touchAimLastAngle),
-      Math.cos(nextTouchAngle - this.touchAimLastAngle)
-    );
-    const distance = Math.hypot(
-      this.mousePos.x - cueBallPos.x,
-      this.mousePos.y - cueBallPos.y
-    );
-    const speedFactor = this.getTouchAimSpeedFactor(distance);
-    const nextAimAngle = this.aimAngle + delta * speedFactor;
-    this.aimAngle = Math.atan2(Math.sin(nextAimAngle), Math.cos(nextAimAngle));
-    this.touchAimLastAngle = nextTouchAngle;
-  }
-
-  endTouchAimDrag() {
-    this.touchAimDragActive = false;
-  }
-
-  startPowerShot() {
+  private startPowerShot() {
     if (this.ballInHand) return;
     if (this.canShoot()) {
       this.aiming = true;
@@ -647,7 +265,7 @@ class PoolGameEngine {
     }
   }
 
-  releasePowerShot() {
+  private releasePowerShot() {
     if (this.aiming && this.canShoot()) {
       this.shoot();
     }
@@ -664,7 +282,7 @@ class PoolGameEngine {
   beginTouchPowerControl(): boolean {
     if (this.ballInHand) return false;
     if (!this.canShoot()) return false;
-    this.endTouchAimDrag();
+    this.input.touchAimDragActive = false;
     this.aiming = true;
     this.powerIncreasing = false;
     return true;
@@ -692,226 +310,7 @@ class PoolGameEngine {
     );
   }
 
-  handlePointerDown(source: 'mouse' | 'touch') {
-    this.unlockAudio();
-
-    if (this.openingSoundPending) {
-      this.playOpeningSound();
-    }
-
-    if (this.cueControlExpanded) {
-      if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, true)) {
-        this.draggingCueSpin = true;
-        this.updateCueSpinOffset(this.mousePos.x, this.mousePos.y, true);
-        return;
-      }
-
-      this.cueControlExpanded = false;
-      return;
-    }
-
-    if (this.isWithinCueSpinControl(this.mousePos.x, this.mousePos.y, false)) {
-      this.cueControlExpanded = true;
-      return;
-    }
-
-    if (this.ballInHand) {
-      this.placeBallInHand();
-      return;
-    }
-
-    if (source === 'touch' && this.mobileTouchControlsEnabled) {
-      this.beginTouchAimDrag();
-      return;
-    }
-    this.startPowerShot();
-  }
-
-  handlePointerUp(source: 'mouse' | 'touch') {
-    if (this.draggingCueSpin) {
-      this.draggingCueSpin = false;
-      return;
-    }
-    if (source === 'touch' && this.mobileTouchControlsEnabled) {
-      this.endTouchAimDrag();
-      return;
-    }
-    this.releasePowerShot();
-  }
-
-  setupEventListeners() {
-    const handleMouseMove = (e: MouseEvent) => {
-      this.updateMousePosFromClient(e.clientX, e.clientY);
-      this.updateAimFromMousePosition();
-    };
-    const handleMouseDown = () => {
-      this.handlePointerDown('mouse');
-    };
-    const handleMouseUp = () => {
-      this.handlePointerUp('mouse');
-    };
-    const handleMouseLeave = () => {
-      this.draggingCueSpin = false;
-      this.endTouchAimDrag();
-      this.cancelPowerShot();
-    };
-
-    const handleTouchStart = (e: TouchEvent) => {
-      const touch = e.changedTouches[0];
-      if (!touch) return;
-      this.updateMousePosFromClient(touch.clientX, touch.clientY);
-      this.handlePointerDown('touch');
-      e.preventDefault();
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      const touch = e.changedTouches[0];
-      if (!touch) return;
-      this.updateMousePosFromClient(touch.clientX, touch.clientY);
-      if (this.touchAimDragActive) {
-        this.updateTouchAimDragFromMousePosition();
-      } else {
-        this.updateAimFromMousePosition();
-      }
-      e.preventDefault();
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      this.handlePointerUp('touch');
-      e.preventDefault();
-    };
-
-    const handleTouchCancel = (e: TouchEvent) => {
-      this.draggingCueSpin = false;
-      this.endTouchAimDrag();
-      this.cancelPowerShot();
-      e.preventDefault();
-    };
-
-    this.canvas.addEventListener('mousemove', handleMouseMove);
-    this.canvas.addEventListener('mousedown', handleMouseDown);
-    this.canvas.addEventListener('mouseup', handleMouseUp);
-    this.canvas.addEventListener('mouseleave', handleMouseLeave);
-    this.canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    this.canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-    this.canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
-    this.canvas.addEventListener('touchcancel', handleTouchCancel, { passive: false });
-
-    this.cleanupInputListeners = () => {
-      this.canvas.removeEventListener('mousemove', handleMouseMove);
-      this.canvas.removeEventListener('mousedown', handleMouseDown);
-      this.canvas.removeEventListener('mouseup', handleMouseUp);
-      this.canvas.removeEventListener('mouseleave', handleMouseLeave);
-      this.canvas.removeEventListener('touchstart', handleTouchStart);
-      this.canvas.removeEventListener('touchmove', handleTouchMove);
-      this.canvas.removeEventListener('touchend', handleTouchEnd);
-      this.canvas.removeEventListener('touchcancel', handleTouchCancel);
-    };
-  }
-
-  getCueSpinControlLayout(expanded: boolean) {
-    if (expanded) {
-      return {
-        centerX: this.canvas.width - 80,
-        centerY: 88,
-        radius: 50
-      };
-    }
-
-    return {
-      centerX: this.canvas.width - 20,
-      centerY: this.canvas.height / 2 - 20,
-      radius: 14
-    };
-  }
-
-  isWithinCueSpinControl(x: number, y: number, expanded: boolean): boolean {
-    const { centerX, centerY, radius } = this.getCueSpinControlLayout(expanded);
-    return Math.hypot(x - centerX, y - centerY) <= radius;
-  }
-
-  updateCueSpinOffset(x: number, y: number, expanded: boolean) {
-    const { centerX, centerY, radius } = this.getCueSpinControlLayout(expanded);
-    const relX = x - centerX;
-    const relY = y - centerY;
-    const dist = Math.hypot(relX, relY);
-
-    if (dist <= radius) {
-      this.cueSpinOffset = {
-        x: relX / radius,
-        y: relY / radius
-      };
-      return;
-    }
-
-    this.cueSpinOffset = {
-      x: relX / dist,
-      y: relY / dist
-    };
-  }
-
-  canShoot(): boolean {
-    if (this.ballInHand) return false;
-    return canShoot({
-      mode: this.mode,
-      isMyTurn: this.isMyTurn,
-      balls: this.balls
-    });
-  }
-
-  getTableBounds() {
-    const cushionInset = 40;
-    const ballRadius = 12;
-    const physBallRadius = ballRadius / SCALE;
-    const physCushionInset = cushionInset / SCALE;
-    return {
-      tableLeft: physCushionInset + physBallRadius,
-      tableRight: this.canvas.width / SCALE - physCushionInset - physBallRadius,
-      tableTop: physCushionInset + physBallRadius,
-      tableBottom: this.canvas.height / SCALE - physCushionInset - physBallRadius,
-      ballRadius: physBallRadius
-    };
-  }
-
-  placeBallInHand() {
-    if (!this.ballInHand) return;
-    // In online mode, only the current player can place
-    if (this.mode === 'online' && !this.isMyTurn) return;
-
-    const physX = this.mousePos.x / SCALE;
-    const physZ = this.mousePos.y / SCALE;
-    const bounds = this.getTableBounds();
-
-    const ballPositions = this.balls
-      .filter(b => b.type !== 'cue')
-      .map(b => {
-        const pos = b.body.translation();
-        return { x: pos.x, z: pos.z };
-      });
-
-    if (!isValidBallPlacement({
-      physX,
-      physZ,
-      ballPositions,
-      ...bounds
-    })) {
-      return;
-    }
-
-    const cueBall = this.balls.find(b => b.type === 'cue');
-    if (!cueBall) return;
-
-    cueBall.body.setTranslation({ x: physX, y: bounds.ballRadius, z: physZ }, true);
-    cueBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    cueBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    this.ballInHand = false;
-
-    if (this.mode === 'online') {
-      this.sendGameMessage({ type: 'ball_in_hand_place', position: { x: physX, z: physZ } });
-    }
-  }
-
-  shoot() {
+  private shoot() {
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
@@ -923,7 +322,7 @@ class PoolGameEngine {
     };
 
     if (this.mode === 'online') {
-      this.sendGameMessage({ type: 'shot', input });
+      this.network.send({ type: 'shot', input });
     }
 
     this.applyShot(input);
@@ -931,12 +330,12 @@ class PoolGameEngine {
     this.cueControlExpanded = false;
   }
 
-  applyShot(input: ShotInput) {
+  private applyShot(input: ShotInput) {
     const cueBall = this.balls.find(b => b.type === 'cue');
     if (!cueBall) return;
 
     const isBreakShot = !this.gameStarted;
-    this.playShotSound(isBreakShot, input.power);
+    this.audio.playShot(isBreakShot, input.power);
     this.shotInProgress = true;
     this.pocketedThisShot = { solids: [], stripes: [], cueBall: false };
 
@@ -945,7 +344,6 @@ class PoolGameEngine {
     const impulseZ = Math.sin(input.angle) * impulseStrength;
 
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
-
     cueBall.body.applyTorqueImpulse({
       x: -impulseZ * input.topspin,
       y: impulseStrength * input.sidespin,
@@ -955,7 +353,7 @@ class PoolGameEngine {
     this.gameStarted = true;
   }
 
-  checkPockets() {
+  private checkPockets() {
     if (!this.world) return;
     const pocketedEvents = checkPockets({
       world: this.world,
@@ -969,128 +367,30 @@ class PoolGameEngine {
 
     const now = performance.now();
     pocketedEvents.forEach((event) => {
-      this.pocketingAnimations.push({
-        ...event,
-        startTime: now,
-        duration: 250
-      });
+      this.pocketingAnimations.push({ ...event, startTime: now, duration: 250 });
     });
   }
 
-  // Find the first target ball that will be hit by the cue ball along the aim line
-  findTargetBall(
-    cueBallX: number,
-    cueBallY: number,
-    aimAngle: number,
-    ballRadius: number
-  ): { impactX: number; impactY: number; targetBallX: number; targetBallY: number } | null {
-    const dirX = Math.cos(aimAngle);
-    const dirY = Math.sin(aimAngle);
-
-    let closestDist = Infinity;
-    let closestBall: { x: number; y: number } | null = null;
-
-    // Check each ball (except cue ball)
-    for (const ball of this.balls) {
-      if (ball.type === 'cue') continue;
-
-      const pos = ball.body.translation();
-      const targetX = pos.x * SCALE;
-      const targetY = pos.z * SCALE;
-
-      // Vector from cue ball to target ball
-      const toTargetX = targetX - cueBallX;
-      const toTargetY = targetY - cueBallY;
-
-      // Project target ball position onto aim line
-      const projDist = toTargetX * dirX + toTargetY * dirY;
-
-      // Skip if ball is behind the cue ball
-      if (projDist <= 0) continue;
-
-      // Find closest point on aim line to target ball center
-      const closestPointX = cueBallX + dirX * projDist;
-      const closestPointY = cueBallY + dirY * projDist;
-
-      // Distance from aim line to target ball center
-      const perpDistX = targetX - closestPointX;
-      const perpDistY = targetY - closestPointY;
-      const perpDist = Math.sqrt(perpDistX * perpDistX + perpDistY * perpDistY);
-
-      // Collision occurs if perpendicular distance < 2 * radius (two balls touching)
-      const collisionDist = ballRadius * 2;
-
-      if (perpDist < collisionDist) {
-        // Calculate how far back from closest point the collision actually occurs
-        // Using Pythagorean theorem: the cue ball center is at distance d along line
-        // where d^2 + perpDist^2 = collisionDist^2
-        const backDist = Math.sqrt(collisionDist * collisionDist - perpDist * perpDist);
-        const actualDist = projDist - backDist;
-
-        if (actualDist > ballRadius && actualDist < closestDist) {
-          closestDist = actualDist;
-          closestBall = { x: targetX, y: targetY };
-        }
-      }
-    }
-
-    if (closestBall) {
-      // Calculate the exact impact point (where cue ball center will be)
-      const impactX = cueBallX + dirX * closestDist;
-      const impactY = cueBallY + dirY * closestDist;
-
-      return {
-        impactX,
-        impactY,
-        targetBallX: closestBall.x,
-        targetBallY: closestBall.y
-      };
-    }
-
-    return null;
-  }
-
-  // Apply current physicsConfig values to all Rapier bodies/colliders
-  syncPhysicsConfig() {
-    for (const ball of this.balls) {
-      ball.body.setLinearDamping(physicsConfig.LINEAR_DAMPING);
-      ball.body.setAngularDamping(physicsConfig.ANGULAR_DAMPING);
-      ball.collider.setRestitution(physicsConfig.BALL_RESTITUTION);
-      ball.collider.setFriction(physicsConfig.BALL_FRICTION);
-      ball.collider.setMass(physicsConfig.BALL_MASS);
-    }
-    for (const cushionBody of this.cushionBodies) {
-      for (let i = 0; i < cushionBody.numColliders(); i++) {
-        const collider = cushionBody.collider(i);
-        collider.setRestitution(physicsConfig.CUSHION_RESTITUTION);
-        collider.setFriction(physicsConfig.CUSHION_FRICTION);
-      }
-    }
-  }
-
-  gameLoop(currentTime: number = performance.now()) {
+  private gameLoop(currentTime: number = performance.now()) {
     if (!this.world) return;
 
     if (this.lastTime === 0) this.lastTime = currentTime;
     const frameTime = Math.min((currentTime - this.lastTime) / 1000, 0.05);
     this.lastTime = currentTime;
 
-    // Sync debug UI physics values to Rapier bodies/colliders
-    this.syncPhysicsConfig();
+    syncPhysicsConfig(this.balls, this.cushionBodies);
 
-    // Fixed timestep physics
     this.accumulator += frameTime;
     this.world.timestep = FIXED_DT;
 
     while (this.accumulator >= FIXED_DT) {
       this.world.step(this.eventQueue || undefined);
-      this.processCollisionEvents();
+      if (this.eventQueue) this.audio.processCollisionEvents(this.eventQueue, this.world, this.balls);
       this.checkPockets();
       applyRollingFriction(this.balls, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 
-    // Check if shot has ended (all balls stopped)
     if (this.shotInProgress && allBallsStopped(this.balls)) {
       this.onShotSettled();
     }
@@ -1099,11 +399,29 @@ class PoolGameEngine {
       this.power = Math.min(this.power + 0.01 * physicsConfig.MAX_SHOT_POWER, physicsConfig.MAX_SHOT_POWER);
     }
 
-    this.render();
+    this.renderer.render({
+      balls: this.balls,
+      pockets: this.pockets,
+      pocketed: this.pocketed,
+      currentPlayer: this.currentPlayer,
+      playerTypes: this.playerTypes,
+      aiming: this.aiming,
+      aimAngle: this.aimAngle,
+      power: this.power,
+      ballInHand: this.ballInHand,
+      mousePos: this.input.mousePos,
+      canShoot: this.canShoot(),
+      cueSpinOffset: this.cueSpinOffset,
+      cueControlExpanded: this.cueControlExpanded,
+      pocketingAnimations: this.pocketingAnimations,
+      mode: this.mode,
+      isMyTurn: this.isMyTurn
+    });
+
     this.animationId = requestAnimationFrame((t) => this.gameLoop(t));
   }
 
-  onShotSettled() {
+  private onShotSettled() {
     const result = evaluateTurnSwitch({
       currentPlayer: this.currentPlayer,
       mode: this.mode,
@@ -1116,37 +434,27 @@ class PoolGameEngine {
     this.isMyTurn = result.isMyTurn;
     this.shotInProgress = false;
 
-    // Ball-in-hand after scratch
     if (this.pocketedThisShot.cueBall) {
       this.ballInHand = true;
-      this.playSound('foulDing');
+      this.audio.play('foulDing');
     }
 
     if (this.mode === 'online') {
       const snapshot: GameStateSnapshot = {
         balls: serializeBalls(this.balls),
-        pocketed: {
-          solids: [...this.pocketed.solids],
-          stripes: [...this.pocketed.stripes],
-          eight: this.pocketed.eight
-        }
+        pocketed: clonePocketed(this.pocketed)
       };
       const hash = hashGameState(snapshot);
       this.lastSnapshot = snapshot;
       this.lastHash = hash;
 
-      this.sendGameMessage({ type: 'state_hash', hash });
-
-      this.sendGameMessage({
+      this.network.send({ type: 'state_hash', hash });
+      this.network.send({
         type: 'turn',
         state: {
           currentPlayer: this.currentPlayer,
           playerTypes: { ...this.playerTypes },
-          pocketed: {
-            solids: [...this.pocketed.solids],
-            stripes: [...this.pocketed.stripes],
-            eight: this.pocketed.eight
-          }
+          pocketed: clonePocketed(this.pocketed)
         }
       });
 
@@ -1156,7 +464,6 @@ class PoolGameEngine {
       }
     }
 
-    // Check for game over in all modes
     const gameOverResult = evaluateGameOver({
       currentPlayer: this.currentPlayer,
       playerTypes: this.playerTypes,
@@ -1165,7 +472,7 @@ class PoolGameEngine {
 
     if (gameOverResult) {
       if (this.mode === 'online') {
-        this.sendGameMessage({
+        this.network.send({
           type: 'game_over',
           winner: gameOverResult.winner,
           reason: gameOverResult.reason
@@ -1178,945 +485,15 @@ class PoolGameEngine {
     }
   }
 
-  render() {
-    const ctx = this.ctx;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    const radius = 12;
-    const now = performance.now();
-
-    // Background
-    ctx.fillStyle = 'hsl(25, 15%, 8%)';
-    ctx.fillRect(0, 0, w, h);
-
-    // Table felt
-    ctx.fillStyle = 'hsl(145, 50%, 28%)';
-    ctx.fillRect(40, 40, w - 80, h - 80);
-
-    // Cushion shadows (light from top)
-    const cushionInset = 40;
-    const cushionInnerInset = 60;
-    const cushionShadowDepth = 10;
-    const sideCushionShadowDepth = 3;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(cushionInset, cushionInset, w - cushionInset * 2, h - cushionInset * 2);
-    ctx.clip();
-
-    const topShadow = ctx.createLinearGradient(0, cushionInnerInset, 0, cushionInnerInset + cushionShadowDepth);
-    topShadow.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
-    topShadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = topShadow;
-    ctx.fillRect(cushionInnerInset, cushionInnerInset, w - cushionInnerInset * 2, cushionShadowDepth);
-
-    const sideShadow = ctx.createLinearGradient(0, cushionInnerInset, 0, cushionInnerInset + cushionShadowDepth * 16);
-    sideShadow.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
-    sideShadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = sideShadow;
-    ctx.fillRect(cushionInnerInset, cushionInnerInset, sideCushionShadowDepth, h - cushionInnerInset * 2);
-    ctx.fillRect(w - cushionInnerInset - sideCushionShadowDepth, cushionInnerInset, sideCushionShadowDepth, h - cushionInnerInset * 2);
-
-    const bottomShadow = ctx.createLinearGradient(
-      0,
-      h - cushionInnerInset - cushionShadowDepth,
-      0,
-      h - cushionInnerInset
-    );
-    bottomShadow.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    bottomShadow.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
-    ctx.fillStyle = bottomShadow;
-    ctx.fillRect(
-      cushionInnerInset,
-      h - cushionInnerInset - cushionShadowDepth,
-      w - cushionInnerInset * 2,
-      cushionShadowDepth
-    );
-
-    ctx.restore();
-
-    // Table markings
-    ctx.strokeStyle = 'hsl(145, 50%, 35%)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(60, 60, w - 120, h - 120);
-
-    // Pockets with proper openings
-    this.pockets.forEach((pocket, index) => {
-      // Outer pocket rim (dark wood)
-      ctx.fillStyle = 'hsl(25, 35%, 15%)';
-      ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius + 6, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Pocket opening shadow ring
-      ctx.fillStyle = 'hsl(25, 15%, 8%)';
-      ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius + 2, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Main pocket hole (deep black)
-      const gradient = ctx.createRadialGradient(
-        pocket.x, pocket.y, 0,
-        pocket.x, pocket.y, pocket.radius
-      );
-      gradient.addColorStop(0, 'hsl(0, 0%, 2%)');
-      gradient.addColorStop(0.7, 'hsl(0, 0%, 5%)');
-      gradient.addColorStop(1, 'hsl(0, 0%, 10%)');
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Inner pocket depth effect
-      ctx.fillStyle = 'hsl(0, 0%, 0%)';
-      ctx.beginPath();
-      ctx.arc(pocket.x, pocket.y, pocket.radius * 0.7, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Pocket opening highlights (leather/rubber edge)
-      ctx.strokeStyle = 'hsl(25, 25%, 20%)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      // Draw partial arc for 3D effect based on pocket position
-      // Corner pockets (0, 2, 3, 5) get diagonal openings
-      // Side pockets (1, 4) get horizontal openings
-      if (index === 0) { // Top-left corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.75, Math.PI * 1.75);
-      } else if (index === 2) { // Top-right corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.25, Math.PI * 2.25);
-      } else if (index === 3) { // Bottom-left corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.25, Math.PI * 1.25);
-      } else if (index === 5) { // Bottom-right corner
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * -0.25, Math.PI * 0.75);
-      } else if (index === 1) { // Top-middle
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 1.1, Math.PI * 1.9);
-      } else if (index === 4) { // Bottom-middle
-        ctx.arc(pocket.x, pocket.y, pocket.radius - 1, Math.PI * 0.1, Math.PI * 0.9);
-      }
-      ctx.stroke();
-
-      // Subtle inner highlight for depth
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(pocket.x - 2, pocket.y - 2, pocket.radius * 0.5, 0, Math.PI * 2);
-      ctx.stroke();
-    });
-
-    // Ball shadows (drawn first, below all balls)
-    this.balls.forEach(ball => {
-      // Skip cue ball shadow during ball-in-hand
-      if (this.ballInHand && ball.type === 'cue') return;
-
-      const pos = ball.body.translation();
-      const pixelX = pos.x * SCALE;
-      const pixelY = pos.z * SCALE;
-
-      // Shadow offset (light from above, slightly behind)
-      const shadowOffsetX = 3;
-      const shadowOffsetY = 4;
-
-      // Draw elliptical shadow
-      ctx.save();
-      ctx.translate(pixelX + shadowOffsetX, pixelY + shadowOffsetY);
-      ctx.scale(1, 0.6); // Flatten to ellipse
-      const shadowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 1.1);
-      shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0.79)');
-      shadowGradient.addColorStop(0.6, 'rgba(0, 0, 0, 0.54)');
-      shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0.28)');
-      ctx.fillStyle = shadowGradient;
-      ctx.beginPath();
-      ctx.arc(0, 0, radius * 1.1, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    });
-
-    // Balls
-    this.balls.forEach(ball => {
-      // Skip cue ball during ball-in-hand (rendered as ghost at mouse)
-      if (this.ballInHand && ball.type === 'cue') return;
-
-      const pos = ball.body.translation();
-      const rot = ball.body.rotation(); // Quaternion
-
-      // Convert 3D position to 2D pixel coordinates
-      const pixelX = pos.x * SCALE;
-      const pixelY = pos.z * SCALE; // Z becomes Y in 2D view
-
-      this.renderBall3D(ctx, pixelX, pixelY, radius, ball.type, ball.number, rot);
-    });
-
-    // Pocketing animations (balls falling into pockets)
-    if (this.pocketingAnimations.length > 0) {
-      this.pocketingAnimations = this.pocketingAnimations.filter((anim) => {
-        const elapsed = now - anim.startTime;
-        if (elapsed >= anim.duration) return false;
-
-        const t = Math.min(elapsed / anim.duration, 1);
-        const ease = t * t;
-        const drawX = anim.startX + (anim.pocketX - anim.startX) * ease;
-        const drawY = anim.startY + (anim.pocketY - anim.startY) * ease;
-        const scale = 1 - 0.75 * ease;
-        const alpha = 1 - 0.85 * ease;
-
-        // Shadow shrinks as ball drops
-        ctx.save();
-        ctx.globalAlpha = 0.45 * (1 - ease);
-        ctx.translate(drawX + 2, drawY + 3);
-        ctx.scale(1, 0.6);
-        ctx.beginPath();
-        ctx.arc(0, 0, radius * 1.05 * scale, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-        ctx.fill();
-        ctx.restore();
-
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        this.renderBall3D(
-          ctx,
-          drawX,
-          drawY,
-          radius * scale,
-          anim.type,
-          anim.number,
-          anim.rotation
-        );
-        ctx.restore();
-
-        return true;
-      });
-    }
-
-    // Ball-in-hand ghost rendering
-    if (this.ballInHand) {
-      const canPlace = this.mode !== 'online' || this.isMyTurn;
-      if (canPlace) {
-        const ghostX = this.mousePos.x;
-        const ghostY = this.mousePos.y;
-        const physX = ghostX / SCALE;
-        const physZ = ghostY / SCALE;
-        const bounds = this.getTableBounds();
-
-        const ballPositions = this.balls
-          .filter(b => b.type !== 'cue')
-          .map(b => {
-            const pos = b.body.translation();
-            return { x: pos.x, z: pos.z };
-          });
-
-        const valid = isValidBallPlacement({
-          physX, physZ, ballPositions, ...bounds
-        });
-
-        // Ghost shadow
-        ctx.save();
-        ctx.globalAlpha = 0.4;
-        ctx.translate(ghostX + 3, ghostY + 4);
-        ctx.scale(1, 0.6);
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.beginPath();
-        ctx.arc(0, 0, radius * 1.1, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-
-        // Ghost cue ball
-        ctx.save();
-        ctx.globalAlpha = 0.7;
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.arc(ghostX, ghostY, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-
-        // Validity indicator ring
-        ctx.strokeStyle = valid ? 'rgba(50, 205, 50, 0.8)' : 'rgba(220, 50, 50, 0.8)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(ghostX, ghostY, radius + 3, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Instructional text
-        ctx.fillStyle = valid ? 'hsl(120, 60%, 60%)' : 'hsl(0, 60%, 60%)';
-        ctx.font = 'bold 16px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Ball in Hand - Click to place', w / 2, h - 30);
-      } else {
-        // Waiting for opponent to place
-        ctx.fillStyle = 'hsl(45, 80%, 65%)';
-        ctx.font = 'bold 16px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Opponent placing cue ball...', w / 2, h - 30);
-      }
-    }
-
-    // Cue stick
-    if (this.canShoot()) {
-      const cueBall = this.balls.find(b => b.type === 'cue');
-      if (cueBall) {
-        const pos = cueBall.body.translation();
-        const ballPixelX = pos.x * SCALE;
-        const ballPixelY = pos.z * SCALE;
-
-        const cueLength = 400;
-        const powerRatio = Math.min(this.power / physicsConfig.MAX_SHOT_POWER, 1);
-        const cueDistance = this.aiming ? 30 + powerRatio * 50 : 30;
-        const startX = ballPixelX - Math.cos(this.aimAngle) * cueDistance;
-        const startY = ballPixelY - Math.sin(this.aimAngle) * cueDistance;
-        const endX = startX - Math.cos(this.aimAngle) * cueLength;
-        const endY = startY - Math.sin(this.aimAngle) * cueLength;
-        const cueAngle = Math.atan2(endY - startY, endX - startX);
-
-	        const tipLength = 6;
-	        const ferruleLength = 10;
-	        const shaftLength = cueLength * 0.62;
-	        const shaftStart = tipLength + ferruleLength;
-	        const buttStart = shaftStart + shaftLength;
-
-        // Cue stick shadow
-        const shadowOffsetX = 4;
-        const shadowOffsetY = 5;
-        ctx.save();
-        ctx.translate(startX + shadowOffsetX, startY + shadowOffsetY);
-        ctx.rotate(cueAngle);
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.28)';
-        ctx.lineWidth = 12;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(cueLength, 0);
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.save();
-        ctx.translate(startX, startY);
-        ctx.rotate(cueAngle);
-
-        const drawSegment = (x0: number, x1: number, width: number, style: CanvasRenderingContext2D['strokeStyle']) => {
-          ctx.strokeStyle = style;
-          ctx.lineWidth = width;
-          ctx.lineCap = 'round';
-          ctx.beginPath();
-          ctx.moveTo(x0, 0);
-          ctx.lineTo(x1, 0);
-          ctx.stroke();
-        };
-
-        // Tip (near ball)
-        drawSegment(0, tipLength, 7, '#1f2937');
-        ctx.fillStyle = '#111827';
-        ctx.beginPath();
-        ctx.arc(0, 0, 3.2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Ferrule
-        drawSegment(tipLength, tipLength + ferruleLength, 7.4, '#e5e7eb');
-
-        // Shaft
-        const shaftGradient = ctx.createLinearGradient(shaftStart, 0, shaftStart + shaftLength, 0);
-        shaftGradient.addColorStop(0, 'hsl(35, 45%, 78%)');
-        shaftGradient.addColorStop(0.45, 'hsl(30, 42%, 62%)');
-        shaftGradient.addColorStop(1, 'hsl(25, 38%, 45%)');
-        drawSegment(shaftStart, shaftStart + shaftLength, 7.8, shaftGradient);
-
-        // Butt with wrap
-        const buttGradient = ctx.createLinearGradient(buttStart, 0, cueLength, 0);
-        buttGradient.addColorStop(0, 'hsl(20, 45%, 35%)');
-        buttGradient.addColorStop(0.6, 'hsl(18, 40%, 28%)');
-        buttGradient.addColorStop(1, 'hsl(12, 35%, 18%)');
-        drawSegment(buttStart, cueLength, 10, buttGradient);
-
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(buttStart + 8, 0);
-        ctx.lineTo(buttStart + 28, 0);
-        ctx.stroke();
-
-        // Butt cap
-        ctx.fillStyle = 'hsl(12, 35%, 14%)';
-        ctx.beginPath();
-        ctx.arc(cueLength, 0, 5.2, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
-
-        // Find the first target ball that will be hit
-        const targetBallInfo = this.findTargetBall(ballPixelX, ballPixelY, this.aimAngle, radius);
-
-        // Aiming line - always visible when can shoot
-        const opacity = this.aiming ? 0.3 + 0.3 * Math.min(this.power / physicsConfig.MAX_SHOT_POWER, 1) : 0.4;
-        ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        ctx.moveTo(ballPixelX, ballPixelY);
-
-        if (targetBallInfo) {
-          // Draw line to impact point (where cue ball center will be at collision)
-          ctx.lineTo(targetBallInfo.impactX, targetBallInfo.impactY);
-          ctx.stroke();
-
-          // Draw ghost ball at impact point (shows where cue ball will be when hitting)
-          ctx.setLineDash([]);
-          ctx.strokeStyle = `rgba(255, 255, 255, ${opacity + 0.2})`;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(targetBallInfo.impactX, targetBallInfo.impactY, radius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Draw predicted path of target ball after collision
-          const targetDirX = targetBallInfo.targetBallX - targetBallInfo.impactX;
-          const targetDirY = targetBallInfo.targetBallY - targetBallInfo.impactY;
-          const targetDirLen = Math.sqrt(targetDirX * targetDirX + targetDirY * targetDirY);
-
-          if (targetDirLen > 0.1) {
-            const normX = targetDirX / targetDirLen;
-            const normY = targetDirY / targetDirLen;
-
-            // Draw target ball predicted path
-            ctx.strokeStyle = `rgba(255, 200, 100, ${opacity + 0.1})`;
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.beginPath();
-            ctx.moveTo(targetBallInfo.targetBallX, targetBallInfo.targetBallY);
-            ctx.lineTo(
-              targetBallInfo.targetBallX + normX * 150,
-              targetBallInfo.targetBallY + normY * 150
-            );
-            ctx.stroke();
-          }
-          ctx.setLineDash([]);
-        } else {
-          // No target ball - draw full aiming line
-          ctx.lineTo(
-            ballPixelX + Math.cos(this.aimAngle) * 300,
-            ballPixelY + Math.sin(this.aimAngle) * 300
-          );
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      }
-    }
-
-    // Power meter
-    if (this.aiming) {
-      const meterX = w / 2;
-      const meterY = h - 60;
-      const meterWidth = 200;
-      const meterHeight = 20;
-
-      ctx.fillStyle = 'hsl(25, 15%, 15%)';
-      ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth, meterHeight);
-
-      const powerRatio = Math.min(this.power / physicsConfig.MAX_SHOT_POWER, 1);
-      ctx.fillStyle = `hsl(${120 - powerRatio * 120}, 70%, 50%)`;
-      ctx.fillRect(meterX - meterWidth/2, meterY, meterWidth * powerRatio, meterHeight);
-
-      ctx.strokeStyle = 'hsl(45, 80%, 65%)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(meterX - meterWidth/2, meterY, meterWidth, meterHeight);
-    }
-
-    // Ball display and turn indicator
-    this.renderBallDisplay(ctx, w, h);
-
-    this.renderCueSpinControl(ctx);
-  }
-
-  renderCueSpinControl(ctx: CanvasRenderingContext2D) {
-    if (!this.cueControlExpanded) {
-      this.renderMiniCueSpinControl(ctx);
-      return;
-    }
-
-    const { centerX, centerY, radius } = this.getCueSpinControlLayout(true);
-
-    ctx.save();
-    ctx.fillStyle = 'rgba(12, 12, 12, 0.55)';
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius + 16, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#f3f4f6';
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(centerX - radius, centerY);
-    ctx.lineTo(centerX + radius, centerY);
-    ctx.moveTo(centerX, centerY - radius);
-    ctx.lineTo(centerX, centerY + radius);
-    ctx.stroke();
-
-    const dotX = centerX + this.cueSpinOffset.x * radius;
-    const dotY = centerY + this.cueSpinOffset.y * radius;
-    ctx.fillStyle = '#dc2626';
-    ctx.beginPath();
-    ctx.arc(dotX, dotY, 8, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(dotX - 2, dotY - 2, 3, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#f9fafb';
-    ctx.font = 'bold 12px Arial';
-    ctx.fillText('Cue Ball Control', centerX, centerY - radius - 20);
-    ctx.font = '11px Arial';
-    ctx.fillStyle = 'rgba(249, 250, 251, 0.9)';
-    ctx.fillText('Top', centerX, centerY - radius - 6);
-    ctx.fillText('Back', centerX, centerY + radius + 15);
-    ctx.fillText('Left', centerX - radius - 20, centerY + 4);
-    ctx.fillText('Right', centerX + radius + 23, centerY + 4);
-    ctx.restore();
-  }
-
-  renderMiniCueSpinControl(ctx: CanvasRenderingContext2D) {
-    const { centerX, centerY, radius } = this.getCueSpinControlLayout(false);
-
-    ctx.save();
-    ctx.fillStyle = 'rgba(12, 12, 12, 0.45)';
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius + 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#f3f4f6';
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(centerX - radius, centerY);
-    ctx.lineTo(centerX + radius, centerY);
-    ctx.moveTo(centerX, centerY - radius);
-    ctx.lineTo(centerX, centerY + radius);
-    ctx.stroke();
-
-    const dotX = centerX + this.cueSpinOffset.x * radius;
-    const dotY = centerY + this.cueSpinOffset.y * radius;
-    ctx.fillStyle = '#dc2626';
-    ctx.beginPath();
-    ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  // Render the ball display showing solids on left, 8-ball in center, stripes on right
-  renderBallDisplay(ctx: CanvasRenderingContext2D, canvasWidth: number, _canvasHeight: number) {
-    const displayY = 20; // Y position for ball display
-    const ballRadius = 10; // Smaller balls for display
-    const ballSpacing = 24; // Space between ball centers
-    const groupPaddingX = 16;
-    const groupPaddingY = 8;
-
-    // Colors for balls 1-7 (solids) and 9-15 (stripes use same colors)
-    const colors = [
-      '#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025',
-      '#056839', '#862234', '#333333'
-    ];
-
-    const currentPlayerType = this.currentPlayer === 1
-      ? this.playerTypes.player1
-      : this.playerTypes.player2;
-    const activeGroup = currentPlayerType;
-    const solidsAreActive = activeGroup === 'solid';
-    const stripesAreActive = activeGroup === 'stripe';
-
-    const solidsStartX = 90;
-    const solidsEndX = solidsStartX + (6 * ballSpacing);
-    const stripesEndX = canvasWidth - 90;
-    const stripesStartX = stripesEndX - (6 * ballSpacing);
-
-    const drawGroupHighlight = (startX: number, endX: number, active: boolean) => {
-      ctx.save();
-      ctx.strokeStyle = active ? 'hsl(45, 85%, 62%)' : 'rgba(148, 163, 184, 0.22)';
-      ctx.fillStyle = active ? 'rgba(250, 204, 21, 0.14)' : 'rgba(75, 85, 99, 0.2)';
-      ctx.lineWidth = active ? 2 : 1;
-      const width = endX - startX + (groupPaddingX * 2);
-      const x = startX - groupPaddingX;
-      const y = displayY - ballRadius - groupPaddingY;
-      const height = ballRadius * 2 + groupPaddingY * 2;
-      const radius = 12;
-
-      ctx.beginPath();
-      ctx.roundRect(x, y, width, height, radius);
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-    };
-
-    drawGroupHighlight(solidsStartX, solidsEndX, solidsAreActive);
-    drawGroupHighlight(stripesStartX, stripesEndX, stripesAreActive);
-
-    // Render solids (1-7) on top left
-    for (let i = 1; i <= 7; i++) {
-      const x = solidsStartX + (i - 1) * ballSpacing;
-      const isPocketed = this.pocketed.solids.includes(i);
-      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'solid', i, colors[(i - 1) % 8], isPocketed, Boolean(activeGroup) && !solidsAreActive);
-    }
-
-    // Render 8-ball in the middle
-    const eightBallX = canvasWidth / 2 + 50;
-    this.renderDisplayBall(ctx, eightBallX, displayY, ballRadius, 'eight', 8, '#333333', this.pocketed.eight, false);
-
-    // Render stripes (9-15) on top right
-    for (let i = 9; i <= 15; i++) {
-      const x = stripesEndX - (15 - i) * ballSpacing;
-      const isPocketed = this.pocketed.stripes.includes(i);
-      this.renderDisplayBall(ctx, x, displayY, ballRadius, 'stripe', i, colors[(i - 9) % 8], isPocketed, Boolean(activeGroup) && !stripesAreActive);
-    }
-  }
-
-  // Render a single ball in the display (simplified 2D version)
-  renderDisplayBall(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    radius: number,
-    ballType: string,
-    ballNumber: number,
-    color: string,
-    isPocketed: boolean,
-    isMuted: boolean
-  ) {
-    ctx.save();
-
-    // Apply gray filter for pocketed balls
-    if (isPocketed) {
-      ctx.globalAlpha = 0.35;
-    } else if (isMuted) {
-      ctx.globalAlpha = 0.4;
-    }
-
-    if (ballType === 'eight') {
-      // Eight ball - black with white circle and number
-      ctx.fillStyle = isPocketed ? '#555555' : 'black';
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // White circle with number
-      ctx.fillStyle = isPocketed ? '#999999' : 'white';
-      ctx.beginPath();
-      ctx.arc(x, y, radius * 0.55, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = isPocketed ? '#555555' : 'black';
-      ctx.font = `bold ${Math.round(radius * 0.8)}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('8', x, y);
-    } else if (ballType === 'solid') {
-      // Solid ball
-      ctx.fillStyle = isPocketed ? '#666666' : color;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // White circle with number
-      ctx.fillStyle = isPocketed ? '#999999' : 'white';
-      ctx.beginPath();
-      ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = isPocketed ? '#555555' : 'black';
-      ctx.font = `bold ${Math.round(radius * 0.7)}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(String(ballNumber), x, y);
-    } else if (ballType === 'stripe') {
-      // Stripe ball - white with colored stripe
-      ctx.fillStyle = isPocketed ? '#888888' : 'white';
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Draw stripe as a band across the middle
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.clip();
-
-      ctx.fillStyle = isPocketed ? '#666666' : color;
-      ctx.fillRect(x - radius, y - radius * 0.4, radius * 2, radius * 0.8);
-      ctx.restore();
-
-      // White circle with number
-      ctx.fillStyle = isPocketed ? '#999999' : 'white';
-      ctx.beginPath();
-      ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = isPocketed ? '#555555' : 'black';
-      ctx.font = `bold ${Math.round(radius * 0.7)}px Arial`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(String(ballNumber), x, y);
-    }
-
-    // Add subtle border
-    ctx.strokeStyle = isPocketed ? 'rgba(100, 100, 100, 0.5)' : 'rgba(0, 0, 0, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  // Rotate a 3D point by a quaternion
-  rotatePointByQuaternion(
-    point: { x: number; y: number; z: number },
-    q: { w: number; x: number; y: number; z: number }
-  ): { x: number; y: number; z: number } {
-    // Quaternion rotation: q * p * q^(-1)
-    // Use conjugate (negate x,y,z) to correct rotation direction
-    const px = point.x, py = point.y, pz = point.z;
-    const qw = q.w, qx = -q.x, qy = -q.y, qz = -q.z;
-
-    // Calculate q * p (treating p as quaternion with w=0)
-    const tx = 2 * (qy * pz - qz * py);
-    const ty = 2 * (qz * px - qx * pz);
-    const tz = 2 * (qx * py - qy * px);
-
-    return {
-      x: px + qw * tx + (qy * tz - qz * ty),
-      y: py + qw * ty + (qz * tx - qx * tz),
-      z: pz + qw * tz + (qx * ty - qy * tx)
-    };
-  }
-
-  // Render a ball with proper 3D rotation projected to 2D
-  renderBall3D(
-    ctx: CanvasRenderingContext2D,
-    pixelX: number,
-    pixelY: number,
-    radius: number,
-    ballType: string,
-    ballNumber: number,
-    quaternion: { w: number; x: number; y: number; z: number }
-  ) {
-    const colors = [
-      '#FCD116', '#1C3F94', '#EE2737', '#601D84', '#F58025',
-      '#056839', '#862234', '#333333'
-    ];
-
-    ctx.save();
-    ctx.translate(pixelX, pixelY);
-
-    if (ballType === 'cue') {
-      // White cue ball with 3D rotation indicator
-      ctx.fillStyle = 'white';
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'hsl(25, 15%, 80%)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // 3D rotation indicator - blue dot on sphere surface
-      const dotPos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
-      // Project to 2D (viewing from above, Y is up toward camera)
-      // Only show if dot is on visible hemisphere (y > 0 means facing up/camera)
-      if (dotPos3D.y > 0) {
-        // Project x,z to screen, scale by how much it's on the visible side
-        const projX = dotPos3D.x * radius * 0.7;
-        const projY = dotPos3D.z * radius * 0.7;
-        const dotSize = 2 + dotPos3D.y * 1.5; // Larger when more directly facing camera
-        ctx.fillStyle = `rgba(30, 100, 200, ${0.4 + dotPos3D.y * 0.6})`;
-        ctx.beginPath();
-        ctx.arc(projX, projY, dotSize, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (ballType === 'eight') {
-      // Eight ball - black with white circle and number
-      ctx.fillStyle = 'black';
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // The number circle is on the ball surface - render it in 3D
-      // Place the number circle at a specific point that rotates with the ball
-      const circlePos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
-
-      if (circlePos3D.y > -0.2) { // Show when somewhat visible
-        const projX = circlePos3D.x * radius * 0.6;
-        const projY = circlePos3D.z * radius * 0.6;
-        const circleScale = Math.max(0, circlePos3D.y * 0.5 + 0.5);
-        const circleRadius = radius * 0.5 * circleScale;
-
-        if (circleRadius > 2) {
-          // White circle
-          ctx.fillStyle = 'white';
-          ctx.beginPath();
-          ctx.arc(projX, projY, circleRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Number 8
-          if (circleScale > 0.4) {
-            ctx.fillStyle = 'black';
-            ctx.font = `bold ${Math.round(10 * circleScale)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('8', projX, projY);
-          }
-        }
-      }
-    } else {
-      // Solid or stripe ball
-      const colorIndex = (ballNumber - 1) % 8;
-      const ballColor = colors[colorIndex];
-
-      if (ballType === 'solid') {
-        // Solid ball - entirely colored
-        ctx.fillStyle = ballColor;
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        // Stripe ball - white base with colored stripe band
-        ctx.fillStyle = 'white';
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw the stripe as a 3D band around the ball's equator
-        // The stripe is a band in the XZ plane (Y near 0) in ball-local space
-        this.renderStripe3D(ctx, radius, ballColor, quaternion);
-      }
-
-      // Number circle (on ball surface, rotates with ball)
-      const circlePos3D = this.rotatePointByQuaternion({ x: 0, y: 1, z: 0 }, quaternion);
-
-      if (circlePos3D.y > -0.2) {
-        const projX = circlePos3D.x * radius * 0.55;
-        const projY = circlePos3D.z * radius * 0.55;
-        const circleScale = Math.max(0, circlePos3D.y * 0.5 + 0.5);
-        const circleRadius = radius * 0.45 * circleScale;
-
-        if (circleRadius > 2) {
-          ctx.fillStyle = 'white';
-          ctx.beginPath();
-          ctx.arc(projX, projY, circleRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          if (circleScale > 0.35) {
-            ctx.fillStyle = 'black';
-            ctx.font = `bold ${Math.round(9 * circleScale)}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(String(ballNumber), projX, projY);
-          }
-        }
-      }
-    }
-
-    ctx.restore();
-  }
-
-  // Render the stripe band on a stripe ball with 3D rotation
-  renderStripe3D(
-    ctx: CanvasRenderingContext2D,
-    radius: number,
-    color: string,
-    quaternion: { w: number; x: number; y: number; z: number }
-  ) {
-    // The stripe is a band around the equator of the ball
-    // We'll render it by drawing multiple small segments
-    ctx.fillStyle = color;
-
-    const stripeHalfWidth = 0.35; // How wide the stripe is (in terms of Y from -0.35 to 0.35)
-    const segments = 32;
-
-    for (let i = 0; i < segments; i++) {
-      const angle1 = (i / segments) * Math.PI * 2;
-      const angle2 = ((i + 1) / segments) * Math.PI * 2;
-
-      // Points on the stripe edges (top and bottom of stripe band)
-      const points3D = [
-        { x: Math.cos(angle1), y: stripeHalfWidth, z: Math.sin(angle1) },
-        { x: Math.cos(angle2), y: stripeHalfWidth, z: Math.sin(angle2) },
-        { x: Math.cos(angle2), y: -stripeHalfWidth, z: Math.sin(angle2) },
-        { x: Math.cos(angle1), y: -stripeHalfWidth, z: Math.sin(angle1) }
-      ];
-
-      // Normalize and rotate each point
-      const rotatedPoints = points3D.map(p => {
-        const len = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
-        const normalized = { x: p.x / len, y: p.y / len, z: p.z / len };
-        return this.rotatePointByQuaternion(normalized, quaternion);
-      });
-
-      // Check if this segment is visible (average Y > some threshold)
-      const avgY = (rotatedPoints[0].y + rotatedPoints[1].y + rotatedPoints[2].y + rotatedPoints[3].y) / 4;
-      if (avgY < -0.1) continue; // Skip back-facing segments
-
-      // Project to 2D
-      const projected = rotatedPoints.map(p => ({
-        x: p.x * radius * 0.95,
-        y: p.z * radius * 0.95
-      }));
-
-      // Draw the quad
-      ctx.beginPath();
-      ctx.moveTo(projected[0].x, projected[0].y);
-      ctx.lineTo(projected[1].x, projected[1].y);
-      ctx.lineTo(projected[2].x, projected[2].y);
-      ctx.lineTo(projected[3].x, projected[3].y);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-
   destroy() {
-    if (this.animationId) {
-      cancelAnimationFrame(this.animationId);
-    }
-    if (this.cleanupInputListeners) {
-      this.cleanupInputListeners();
-      this.cleanupInputListeners = null;
-    }
-    if (this.eventQueue) {
-      this.eventQueue.free();
-      this.eventQueue = null;
-    }
-    if (this.world) {
-      this.world.free();
-      this.world = null;
-    }
-    if (this.connection) {
-      this.connection.close();
-    }
-    if (this.peer) {
-      this.peer.destroy();
-      this.peer = null;
-    }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    if (this.debugUI) {
-      this.debugUI.destroy();
-      this.debugUI = null;
-    }
-    if (this.cleanupTripleSlash) {
-      this.cleanupTripleSlash();
-      this.cleanupTripleSlash = null;
-    }
-    for (const pool of Object.values(this.audioPool)) {
-      if (!pool) continue;
-      for (const clip of pool.clips) {
-        clip.pause();
-        clip.src = '';
-      }
-    }
+    if (this.animationId) cancelAnimationFrame(this.animationId);
+    this.input.detach();
+    if (this.eventQueue) { this.eventQueue.free(); this.eventQueue = null; }
+    if (this.world) { this.world.free(); this.world = null; }
+    this.network.destroy();
+    if (this.debugUI) { this.debugUI.destroy(); this.debugUI = null; }
+    if (this.cleanupTripleSlash) { this.cleanupTripleSlash(); this.cleanupTripleSlash = null; }
+    this.audio.destroy();
   }
 }
 
