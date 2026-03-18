@@ -46,3 +46,23 @@ input:focus {
   outline: 2px solid hsl(45, 80%, 65%);
   outline-offset: 2px;
 }
+
+/* Mobile power slider: larger touch area, same visual handle size */
+.mobile-power-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  /* Only inner ~50% is visually gold; outer area is transparent but still touchable */
+  background: radial-gradient(circle closest-side, hsl(45, 80%, 65%) 50%, transparent 51%);
+  cursor: pointer;
+}
+
+.mobile-power-slider::-moz-range-thumb {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: radial-gradient(circle closest-side, hsl(45, 80%, 65%) 50%, transparent 51%);
+  border: none;
+  cursor: pointer;
+}
