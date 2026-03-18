@@ -1,5 +1,5 @@
 import { type Ref, type RefObject, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Copy, Check } from 'lucide-react';
 import type PoolGameEngine from '../pool_engine';
 import GameOverOverlay from './GameOverOverlay';
 
@@ -19,8 +19,6 @@ type MobileGameViewProps = {
   onShotSliderChange: (e: ChangeEvent<HTMLInputElement>) => void;
   onShotSliderPointerUp: (e: ReactPointerEvent<HTMLInputElement>) => void;
   onShotSliderPointerCancel: (e: ReactPointerEvent<HTMLInputElement>) => void;
-  onAimHoldStart: (direction: -1 | 1) => (e: ReactPointerEvent<HTMLButtonElement>) => void;
-  onAimHoldEnd: (e: ReactPointerEvent<HTMLButtonElement>) => void;
   gameOver: { winner: number; reason: string } | null;
   gameMode: string | null;
   gameRef: RefObject<PoolGameEngine | null>;
@@ -43,8 +41,6 @@ const MobileGameView = ({
   onShotSliderChange,
   onShotSliderPointerUp,
   onShotSliderPointerCancel,
-  onAimHoldStart,
-  onAimHoldEnd,
   gameOver,
   gameMode,
   gameRef,
@@ -132,9 +128,9 @@ const MobileGameView = ({
           gap: '0.55rem',
           background: 'rgba(20, 20, 20, 0.42)',
           borderRadius: '0.6rem',
-          padding: '0.55rem 0.35rem'
+          padding: '0.55rem 0.5rem'
         }}>
-          <div style={{ color: '#f9fafb', fontSize: '0.72rem', fontWeight: 600 }}>SHOOT</div>
+          <div style={{ color: '#f9fafb', fontSize: '0.72rem' }}>{shotPowerPercent}%</div>
           <input
             type="range"
             min={0}
@@ -144,52 +140,17 @@ const MobileGameView = ({
             onPointerDown={onShotSliderPointerDown}
             onPointerUp={onShotSliderPointerUp}
             onPointerCancel={onShotSliderPointerCancel}
+            className="mobile-power-slider"
             style={{
               WebkitAppearance: 'slider-vertical',
               writingMode: 'vertical-lr',
-              direction: 'rtl',
-              width: '2.6rem',
-              height: '48vh',
+              width: '3rem',
+              height: '55vh',
               accentColor: 'hsl(45, 80%, 65%)',
               touchAction: 'none'
             }}
           />
-          <div style={{ color: '#f9fafb', fontSize: '0.72rem' }}>{shotPowerPercent}%</div>
-        </div>
-
-        <div style={{
-          position: 'absolute',
-          right: '0.5rem',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.5rem'
-        }}>
-          {([-1, 1] as const).map(dir => (
-            <button
-              key={dir}
-              onPointerDown={onAimHoldStart(dir)}
-              onPointerUp={onAimHoldEnd}
-              onPointerLeave={onAimHoldEnd}
-              onPointerCancel={onAimHoldEnd}
-              style={{
-                width: '4.3rem',
-                height: '3.1rem',
-                borderRadius: '0.55rem',
-                background: 'rgba(20, 20, 20, 0.58)',
-                color: '#f3f4f6',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.2rem',
-                fontWeight: 700,
-                touchAction: 'none'
-              }}
-            >
-              {dir === -1 ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-            </button>
-          ))}
+          <div style={{ color: '#f9fafb', fontSize: '0.72rem', fontWeight: 600 }}>SHOOT</div>
         </div>
 
         {gameOver && (
