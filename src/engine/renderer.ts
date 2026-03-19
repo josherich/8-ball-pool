@@ -1,6 +1,7 @@
 import { physicsConfig, SCALE, type Ball, type Pocket, type Pocketed, type PocketedEvent } from '../pool_physics';
 import { isValidBallPlacement } from '../pool_rules';
 import { renderBall3D, renderDisplayBall, BALL_COLORS } from './ball_renderer';
+import { TABLE_THEMES, type ThemeColors, type TableTheme } from '../settings';
 
 export type PocketingAnimation = PocketedEvent & {
   startTime: number;
@@ -79,10 +80,20 @@ function findTargetBall(
 export class PoolRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  private theme: ThemeColors = TABLE_THEMES['green'];
+  private aimLineLength = 300;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
+  }
+
+  setTheme(tableTheme: TableTheme) {
+    this.theme = TABLE_THEMES[tableTheme];
+  }
+
+  setAimLineLength(length: number) {
+    this.aimLineLength = Math.max(100, Math.min(500, length));
   }
 
   render(state: RenderState) {
@@ -92,9 +103,9 @@ export class PoolRenderer {
     const radius = 12;
     const now = performance.now();
 
-    ctx.fillStyle = 'hsl(25, 15%, 8%)';
+    ctx.fillStyle = this.theme.background;
     ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = 'hsl(145, 50%, 28%)';
+    ctx.fillStyle = this.theme.felt;
     ctx.fillRect(40, 40, w - 80, h - 80);
 
     this.renderCushionShadows(ctx, w, h);
@@ -139,7 +150,7 @@ export class PoolRenderer {
   }
 
   private renderTableMarkings(ctx: CanvasRenderingContext2D, w: number, h: number) {
-    ctx.strokeStyle = 'hsl(145, 50%, 35%)';
+    ctx.strokeStyle = this.theme.feltBorder;
     ctx.lineWidth = 2;
     ctx.strokeRect(60, 60, w - 120, h - 120);
   }
@@ -151,10 +162,10 @@ export class PoolRenderer {
     ];
 
     pockets.forEach((p, i) => {
-      ctx.fillStyle = 'hsl(25, 35%, 15%)';
+      ctx.fillStyle = this.theme.pocketShadow;
       ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 6, 0, Math.PI * 2); ctx.fill();
 
-      ctx.fillStyle = 'hsl(25, 15%, 8%)';
+      ctx.fillStyle = this.theme.pocketBg;
       ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 2, 0, Math.PI * 2); ctx.fill();
 
       const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius);
@@ -323,11 +334,11 @@ export class PoolRenderer {
       if (tdl > 0.1) {
         ctx.strokeStyle = `rgba(255, 200, 100, ${op + 0.1})`; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
         ctx.beginPath(); ctx.moveTo(tbi.targetBallX, tbi.targetBallY);
-        ctx.lineTo(tbi.targetBallX + tdx / tdl * 150, tbi.targetBallY + tdy / tdl * 150); ctx.stroke();
+        ctx.lineTo(tbi.targetBallX + tdx / tdl * (this.aimLineLength * 0.5), tbi.targetBallY + tdy / tdl * (this.aimLineLength * 0.5)); ctx.stroke();
       }
       ctx.setLineDash([]);
     } else {
-      ctx.lineTo(bx + Math.cos(state.aimAngle) * 300, by + Math.sin(state.aimAngle) * 300);
+      ctx.lineTo(bx + Math.cos(state.aimAngle) * this.aimLineLength, by + Math.sin(state.aimAngle) * this.aimLineLength);
       ctx.stroke(); ctx.setLineDash([]);
     }
   }

@@ -30,6 +30,7 @@ import { NetworkManager } from './engine/networking';
 import { InputHandler } from './engine/input';
 import { PoolRenderer, type PocketingAnimation } from './engine/renderer';
 import { isWithinCueSpinControl, computeCueSpinOffset } from './engine/cue_spin';
+import { type GameSettings } from './settings';
 
 class PoolGameEngine {
   canvas: HTMLCanvasElement;
@@ -114,6 +115,12 @@ class PoolGameEngine {
     });
 
     this.renderer = new PoolRenderer(canvas);
+
+    if (callbacks.initialSettings) {
+      this.audio.setMasterVolume(callbacks.initialSettings.sfxVolume);
+      this.renderer.setTheme(callbacks.initialSettings.tableTheme);
+      this.renderer.setAimLineLength(callbacks.initialSettings.aimLineLength);
+    }
   }
 
   init() {
@@ -308,6 +315,12 @@ class PoolGameEngine {
       Math.sin(this.aimAngle + deltaRadians),
       Math.cos(this.aimAngle + deltaRadians)
     );
+  }
+
+  updateSettings(settings: GameSettings) {
+    this.audio.setMasterVolume(settings.sfxVolume);
+    this.renderer.setTheme(settings.tableTheme);
+    this.renderer.setAimLineLength(settings.aimLineLength);
   }
 
   private shoot() {

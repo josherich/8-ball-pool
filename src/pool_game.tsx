@@ -11,6 +11,8 @@ import PoolGameEngine from './pool_engine';
 import GameMenu from './components/GameMenu';
 import GameOverOverlay from './components/GameOverOverlay';
 import MobileGameView from './components/MobileGameView';
+import SettingsPage from './components/SettingsPage';
+import { loadSettings, saveSettings, type GameSettings } from './settings';
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 700;
@@ -34,6 +36,8 @@ const PoolGame = () => {
   const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [shotPowerPercent, setShotPowerPercent] = useState(0);
   const [shotSliderActive, setShotSliderActive] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<GameSettings>(loadSettings);
   const gameRef = useRef<PoolGameEngine | null>(null);
   const joinCodeRef = useRef<string | null>(null);
 
@@ -63,12 +67,30 @@ const PoolGame = () => {
       onRoomCodeGenerated: setRoomCode,
       joinCode: joinCodeRef.current,
       onGameOver: setGameOver,
-      mobileTouchControlsEnabled: isMobileDevice
+      mobileTouchControlsEnabled: isMobileDevice,
+      initialSettings: settings,
     });
     gameRef.current.init();
 
     return () => { gameRef.current?.destroy(); };
   }, [gameMode, rapierLoaded, isMobileDevice]);
+
+  // Propagate settings changes to a running game
+  useEffect(() => {
+    gameRef.current?.updateSettings(settings);
+  }, [settings]);
+
+  const handleSettingsSave = (next: GameSettings) => {
+    saveSettings(next);
+    setSettings(next);
+  };
+
+  const stopAimHold = () => {
+    if (aimHoldIntervalRef.current !== null) {
+      window.clearInterval(aimHoldIntervalRef.current);
+      aimHoldIntervalRef.current = null;
+    }
+  };
 
   const cancelShotSlider = () => {
     if (!shotSliderActive) return;
@@ -178,12 +200,23 @@ const PoolGame = () => {
   // --- Render Branches ---
 
   if (!gameMode) {
+    if (showSettings) {
+      return (
+        <SettingsPage
+          settings={settings}
+          onSave={handleSettingsSave}
+          onBack={() => setShowSettings(false)}
+        />
+      );
+    }
+
     return (
       <GameMenu
         isMobileDevice={isMobileDevice}
         onStartLocal={() => setGameMode('local')}
         onHost={handleHost}
         onJoin={handleJoin}
+        onOpenSettings={() => setShowSettings(true)}
       />
     );
   }
