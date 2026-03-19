@@ -40,7 +40,6 @@ const PoolGame = () => {
   const [settings, setSettings] = useState<GameSettings>(loadSettings);
   const gameRef = useRef<PoolGameEngine | null>(null);
   const joinCodeRef = useRef<string | null>(null);
-  const aimHoldIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
     RAPIER.init().then(() => { setRapierLoaded(true); });
@@ -100,8 +99,6 @@ const PoolGame = () => {
     setShotPowerPercent(0);
   };
 
-  useEffect(() => { return () => { stopAimHold(); }; }, []);
-
   const isLandscape = viewport.width >= viewport.height;
   const mobileGameplay = Boolean(gameMode) && isMobileDevice;
   const mobileLandscapeGameplay = mobileGameplay && isLandscape;
@@ -109,7 +106,6 @@ const PoolGame = () => {
 
   useEffect(() => {
     if (mobileLandscapeGameplay) return;
-    stopAimHold();
     cancelShotSlider();
   }, [mobileLandscapeGameplay, shotSliderActive]);
 
@@ -152,7 +148,6 @@ const PoolGame = () => {
   };
 
   const handleBackToMenu = () => {
-    stopAimHold();
     gameRef.current?.cancelPowerShot();
     setGameOver(null);
     setGameMode(null);
@@ -167,21 +162,6 @@ const PoolGame = () => {
     navigator.clipboard.writeText(roomCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleAimHoldStart = (direction: -1 | 1) => (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    stopAimHold();
-    gameRef.current?.adjustAim(direction * 0.1);
-    aimHoldIntervalRef.current = window.setInterval(() => {
-      gameRef.current?.adjustAim(direction * 0.05);
-    }, 32);
-  };
-
-  const handleAimHoldEnd = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    stopAimHold();
   };
 
   const handleShotSliderPointerDown = (event: ReactPointerEvent<HTMLInputElement>) => {
@@ -291,8 +271,6 @@ const PoolGame = () => {
         onShotSliderChange={handleShotSliderChange}
         onShotSliderPointerUp={handleShotSliderPointerUp}
         onShotSliderPointerCancel={handleShotSliderPointerCancel}
-        onAimHoldStart={handleAimHoldStart}
-        onAimHoldEnd={handleAimHoldEnd}
         gameOver={gameOver}
         gameMode={gameMode}
         gameRef={gameRef}
