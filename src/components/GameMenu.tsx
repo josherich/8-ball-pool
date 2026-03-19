@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Camera, Users } from 'lucide-react';
+import { Camera, Users, Settings } from 'lucide-react';
 
 type GameMenuProps = {
   isMobileDevice: boolean;
   onStartLocal: () => void;
   onHost: () => void;
   onJoin: (code: string) => void;
+  onOpenSettings: () => void;
 };
 
-const GameMenu = ({ isMobileDevice, onStartLocal, onHost, onJoin }: GameMenuProps) => {
+const GameMenu = ({ isMobileDevice, onStartLocal, onHost, onJoin, onOpenSettings }: GameMenuProps) => {
   const [inputCode, setInputCode] = useState('');
 
   const handleJoin = () => {
@@ -24,8 +25,33 @@ const GameMenu = ({ isMobileDevice, onStartLocal, onHost, onJoin }: GameMenuProp
       alignItems: 'center',
       justifyContent: 'center',
       background: 'hsl(25, 15%, 8%)',
-      padding: '1rem'
+      padding: '1rem',
+      position: 'relative',
+      boxSizing: 'border-box',
     }}>
+      {/* Settings button - top right */}
+      <button
+        onClick={onOpenSettings}
+        title="Settings"
+        style={{
+          position: 'absolute',
+          top: '1rem',
+          right: '1rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: isMobileDevice ? '2.75rem' : '2.5rem',
+          height: isMobileDevice ? '2.75rem' : '2.5rem',
+          borderRadius: '0.5rem',
+          background: 'rgba(255,255,255,0.07)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          color: 'hsl(45, 80%, 65%)',
+          cursor: 'pointer',
+        }}
+      >
+        <Settings size={isMobileDevice ? 22 : 20} />
+      </button>
+
       <div style={{ textAlign: 'center', width: '100%', maxWidth: '28rem' }}>
         <div style={{ marginBottom: '2rem' }}>
           <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🎱</div>

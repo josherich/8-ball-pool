@@ -39,6 +39,7 @@ export class AudioManager {
   private pools: Record<SoundName, AudioPool | null>;
   private unlocked = false;
   private openingSoundPending = false;
+  private masterVolume = 0.8;
   lastBallCollisionMs = 0;
   lastCushionHitMs = 0;
 
@@ -62,7 +63,7 @@ export class AudioManager {
     pool.index = (pool.index + 1) % pool.clips.length;
 
     clip.currentTime = 0;
-    clip.volume = Math.max(0, Math.min(pool.baseVolume * volumeScale, 1));
+    clip.volume = Math.max(0, Math.min(pool.baseVolume * volumeScale * this.masterVolume, 1));
     clip.playbackRate = playbackRate;
 
     const playback = clip.play();
@@ -95,6 +96,10 @@ export class AudioManager {
     this.play('gameOpening', 1, () => {
       this.openingSoundPending = true;
     });
+  }
+
+  setMasterVolume(v: number) {
+    this.masterVolume = Math.max(0, Math.min(1, v));
   }
 
   get isOpeningPending() { return this.openingSoundPending; }
