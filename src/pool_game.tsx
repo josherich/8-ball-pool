@@ -85,13 +85,6 @@ const PoolGame = () => {
     setSettings(next);
   };
 
-  const stopAimHold = () => {
-    if (aimHoldIntervalRef.current !== null) {
-      window.clearInterval(aimHoldIntervalRef.current);
-      aimHoldIntervalRef.current = null;
-    }
-  };
-
   const cancelShotSlider = () => {
     if (!shotSliderActive) return;
     gameRef.current?.cancelPowerShot();
