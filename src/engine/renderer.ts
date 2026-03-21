@@ -73,14 +73,20 @@ function findTargetBall(
     let impactY = cueBallY + dirY * closestDist;
 
     // Correct for discrete physics: the cue ball overshoots the first-contact
-    // point by up to v*dt during integration. Advance the impact point by the
-    // average overshoot (half a timestep of travel) so the predicted collision
-    // normal matches the actual physics resolution.
+    // point by up to v*dt during integration. With adaptive sub-stepping the
+    // effective dt shrinks for fast balls, so compute the actual sub-step size
+    // that the physics loop will use at impact velocity.
     if (power > 0) {
       const v0 = power * 8 / physicsConfig.BALL_MASS * SCALE; // initial speed in px/s
       const t = closestDist / v0; // approx travel time
       const vImpact = v0 * Math.exp(-physicsConfig.LINEAR_DAMPING * t); // damped speed at impact
-      const overshoot = vImpact * FIXED_DT * 0.5; // average half-step overshoot in px
+      // Mirror computeSubSteps: maxDistPerStep = physRadius * 0.5 (in physics units)
+      const physRadius = ballRadius / SCALE;
+      const maxDistPerStep = physRadius * 0.5;
+      const vImpactPhys = vImpact / SCALE;
+      const subSteps = Math.min(Math.ceil(vImpactPhys * FIXED_DT / maxDistPerStep), 16);
+      const effectiveDt = FIXED_DT / subSteps;
+      const overshoot = vImpact * effectiveDt * 0.5; // half-step in px
       impactX += dirX * overshoot;
       impactY += dirY * overshoot;
     }
@@ -337,7 +343,7 @@ export class PoolRenderer {
     ctx.restore();
 
     // Aiming line
-    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius, 0);
+    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius, state.power);
     const op = state.aiming ? 0.3 + 0.3 * pr : 0.4;
     ctx.strokeStyle = `rgba(255, 255, 255, ${op})`; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
     ctx.beginPath(); ctx.moveTo(bx, by);

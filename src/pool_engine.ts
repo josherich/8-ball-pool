@@ -8,6 +8,7 @@ import {
   setupBalls,
   checkPockets,
   applyRollingFriction,
+  computeSubSteps,
   syncPhysicsConfig,
   clonePocketed,
   type Ball,
@@ -398,12 +399,19 @@ class PoolGameEngine {
     syncPhysicsConfig(this.balls, this.cushionBodies);
 
     this.accumulator += frameTime;
-    this.world.timestep = FIXED_DT;
 
     while (this.accumulator >= FIXED_DT) {
-      this.world.step(this.eventQueue || undefined);
-      if (this.eventQueue) this.audio.processCollisionEvents(this.eventQueue, this.world, this.balls);
-      this.checkPockets();
+      // Adaptive sub-stepping: subdivide when balls are fast so no ball
+      // moves more than ~25% of its diameter per sub-step.
+      const subSteps = computeSubSteps(this.balls, FIXED_DT);
+      const subDt = FIXED_DT / subSteps;
+      this.world.timestep = subDt;
+
+      for (let s = 0; s < subSteps; s++) {
+        this.world.step(this.eventQueue || undefined);
+        if (this.eventQueue) this.audio.processCollisionEvents(this.eventQueue, this.world, this.balls);
+        this.checkPockets();
+      }
       applyRollingFriction(this.balls, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
