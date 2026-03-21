@@ -337,7 +337,7 @@ export class PoolRenderer {
     ctx.restore();
 
     // Aiming line
-    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius, state.power);
+    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius, 0);
     const op = state.aiming ? 0.3 + 0.3 * pr : 0.4;
     ctx.strokeStyle = `rgba(255, 255, 255, ${op})`; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
     ctx.beginPath(); ctx.moveTo(bx, by);
