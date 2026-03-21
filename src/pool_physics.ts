@@ -48,8 +48,11 @@ export const MAX_SHOT_POWER = PHYSICS_DEFAULTS.MAX_SHOT_POWER;
 // Canvas to physics scale (pixels per physics unit)
 export const SCALE = 5;
 
-// Fixed timestep for deterministic physics (120 Hz)
-export const FIXED_DT = 1 / 480;
+// Fixed timestep for deterministic physics (240 Hz)
+// Higher rate improves ball-ball collision accuracy: at lower rates the cue ball
+// overshoots the theoretical first-contact point during discrete integration,
+// shifting the collision normal and making cut shots thinner than predicted.
+export const FIXED_DT = 1 / 240;
 
 export const createWorld = (rapier: typeof RAPIER) =>
   new rapier.World({ x: 0.0, y: 0.0, z: 0.0 });
