@@ -216,6 +216,7 @@ class PoolGameEngine {
 
   canShoot(): boolean {
     if (this.ballInHand) return false;
+    if (this.shotInProgress) return false;
     return canShoot({ mode: this.mode, isMyTurn: this.isMyTurn, balls: this.balls });
   }
 
