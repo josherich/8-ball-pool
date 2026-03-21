@@ -49,7 +49,7 @@ export const MAX_SHOT_POWER = PHYSICS_DEFAULTS.MAX_SHOT_POWER;
 export const SCALE = 5;
 
 // Fixed timestep for deterministic physics (120 Hz)
-export const FIXED_DT = 1 / 120;
+export const FIXED_DT = 1 / 480;
 
 export const createWorld = (rapier: typeof RAPIER) =>
   new rapier.World({ x: 0.0, y: 0.0, z: 0.0 });
