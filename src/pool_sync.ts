@@ -6,6 +6,7 @@ import {
   type PocketedThisShot,
   type PocketedEvent,
   SCALE,
+  FIXED_DT,
   physicsConfig,
   checkPockets,
   applyRollingFriction
@@ -51,8 +52,7 @@ export type GameMessage =
 
 // --- Constants ---
 
-export const FIXED_DT = 1 / 120;
-export const MAX_SIM_STEPS = 120 * 30; // 30 seconds at 120Hz
+export const MAX_SIM_STEPS = Math.round((1 / FIXED_DT) * 30); // 30 seconds at physics rate
 
 // --- Serialization ---
 

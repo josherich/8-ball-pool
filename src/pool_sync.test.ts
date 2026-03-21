@@ -9,7 +9,7 @@ import {
   type ShotInput,
   type GameMessage
 } from './pool_sync';
-import { createWorld, setupTable, setupBalls } from './pool_physics';
+import { createWorld, setupTable, setupBalls, FIXED_DT } from './pool_physics';
 import { evaluateTurnSwitch, evaluateGameOver, isValidBallPlacement } from './pool_rules';
 
 const CANVAS_WIDTH = 1200;
@@ -111,7 +111,8 @@ describe('Deterministic Physics', () => {
     const result = simulateShot(world, balls, pockets, pocketed, input, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
 
     // Should settle well before the 30-second safety limit
-    expect(result.stepsRun).toBeLessThan(120 * 20);
+    const stepsPerSecond = Math.round(1 / FIXED_DT);
+    expect(result.stepsRun).toBeLessThan(stepsPerSecond * 20);
     expect(result.stepsRun).toBeGreaterThan(10);
 
     world.free();
