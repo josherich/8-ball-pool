@@ -27,8 +27,8 @@ export const PHYSICS_DEFAULTS = {
   BALL_FRICTION: 0.001,           // No ball-to-ball friction so physics matches guide line prediction
   CUSHION_RESTITUTION: 0.75,  // Cushion bounce factor
   CUSHION_FRICTION: 0.15,     // Cushion surface friction
-  ROLLING_FRICTION: 0.01,     // Felt resistance (simulated)
-  LINEAR_DAMPING: 0.5,        // Simulates rolling resistance on felt
+  ROLLING_FRICTION: 0.02,     // Felt resistance (simulated)
+  LINEAR_DAMPING: 1.0,        // Simulates rolling resistance on felt
   ANGULAR_DAMPING: 0.9,       // Simulates rotational friction on felt
   MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
 } as const;
@@ -478,7 +478,7 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
     const linvel = ball.body.linvel();
     const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
 
-    if (speed > 0.01) {
+    if (speed > 0.05) {
       // Apply friction force opposite to velocity
       const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * 9.81; // F = mu * m * g
       const deceleration = frictionForce / physicsConfig.BALL_MASS;

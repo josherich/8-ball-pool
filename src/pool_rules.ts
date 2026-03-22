@@ -6,7 +6,7 @@ export const allBallsStopped = (balls: Ball[]): boolean =>
     const angvel = ball.body.angvel();
     const linearSpeed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
     const angularSpeed = Math.sqrt(angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
-    return linearSpeed < 0.05 && angularSpeed < 0.1;
+    return linearSpeed < 0.15 && angularSpeed < 0.3;
   });
 
 export const canShoot = ({
@@ -24,7 +24,7 @@ export const canShoot = ({
     const angvel = ball.body.angvel();
     const linearSpeed = Math.sqrt(linvel.x * linvel.x + linvel.y * linvel.y + linvel.z * linvel.z);
     const angularSpeed = Math.sqrt(angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
-    return linearSpeed < 0.05 && angularSpeed < 0.1;
+    return linearSpeed < 0.15 && angularSpeed < 0.3;
   });
 };
 
