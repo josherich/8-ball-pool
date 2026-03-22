@@ -9,7 +9,8 @@ import {
   FIXED_DT,
   physicsConfig,
   checkPockets,
-  applyRollingFriction
+  applyRollingFriction,
+  computeSubSteps
 } from './pool_physics';
 import { allBallsStopped } from './pool_rules';
 
@@ -161,8 +162,6 @@ export function simulateShot(
   canvasHeight: number,
   RAPIER: typeof RapierModule
 ): SimulationResult {
-  world.timestep = FIXED_DT;
-
   const cueBall = balls.find(b => b.type === 'cue');
   if (!cueBall) throw new Error('No cue ball found');
 
@@ -184,18 +183,25 @@ export function simulateShot(
   const canvasProxy = { width: canvasWidth, height: canvasHeight };
 
   while (steps < MAX_SIM_STEPS) {
-    world.step();
+    // Adaptive sub-stepping matching the live game loop
+    const subSteps = computeSubSteps(balls, FIXED_DT);
+    const subDt = FIXED_DT / subSteps;
+    world.timestep = subDt;
 
-    const events = checkPockets({
-      world,
-      canvas: canvasProxy as any,
-      balls,
-      pockets,
-      pocketed,
-      pocketedThisShot,
-      RAPIER
-    });
-    allPocketedEvents.push(...events);
+    for (let s = 0; s < subSteps; s++) {
+      world.step();
+
+      const events = checkPockets({
+        world,
+        canvas: canvasProxy as any,
+        balls,
+        pockets,
+        pocketed,
+        pocketedThisShot,
+        RAPIER
+      });
+      allPocketedEvents.push(...events);
+    }
 
     applyRollingFriction(balls, FIXED_DT);
 

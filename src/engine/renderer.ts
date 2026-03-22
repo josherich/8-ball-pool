@@ -1,4 +1,4 @@
-import { physicsConfig, SCALE, FIXED_DT, type Ball, type Pocket, type Pocketed, type PocketedEvent } from '../pool_physics';
+import { physicsConfig, SCALE, type Ball, type Pocket, type Pocketed, type PocketedEvent } from '../pool_physics';
 import { isValidBallPlacement } from '../pool_rules';
 import { renderBall3D, renderDisplayBall, BALL_COLORS } from './ball_renderer';
 import { TABLE_THEMES, type ThemeColors, type TableTheme } from '../settings';
@@ -32,8 +32,7 @@ function findTargetBall(
   cueBallX: number,
   cueBallY: number,
   aimAngle: number,
-  ballRadius: number,
-  power: number
+  ballRadius: number
 ): { impactX: number; impactY: number; targetBallX: number; targetBallY: number } | null {
   const dirX = Math.cos(aimAngle);
   const dirY = Math.sin(aimAngle);
@@ -68,26 +67,9 @@ function findTargetBall(
   }
 
   if (closestBall) {
-    // Theoretical first-contact position (cue ball center at moment of contact)
-    let impactX = cueBallX + dirX * closestDist;
-    let impactY = cueBallY + dirY * closestDist;
-
-    // Correct for discrete physics: the cue ball overshoots the first-contact
-    // point by up to v*dt during integration. Advance the impact point by the
-    // average overshoot (half a timestep of travel) so the predicted collision
-    // normal matches the actual physics resolution.
-    if (power > 0) {
-      const v0 = power * 8 / physicsConfig.BALL_MASS * SCALE; // initial speed in px/s
-      const t = closestDist / v0; // approx travel time
-      const vImpact = v0 * Math.exp(-physicsConfig.LINEAR_DAMPING * t); // damped speed at impact
-      const overshoot = vImpact * FIXED_DT * 0.5; // average half-step overshoot in px
-      impactX += dirX * overshoot;
-      impactY += dirY * overshoot;
-    }
-
     return {
-      impactX,
-      impactY,
+      impactX: cueBallX + dirX * closestDist,
+      impactY: cueBallY + dirY * closestDist,
       targetBallX: closestBall.x,
       targetBallY: closestBall.y
     };
@@ -337,7 +319,7 @@ export class PoolRenderer {
     ctx.restore();
 
     // Aiming line
-    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius, 0);
+    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius);
     const op = state.aiming ? 0.3 + 0.3 * pr : 0.4;
     ctx.strokeStyle = `rgba(255, 255, 255, ${op})`; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
     ctx.beginPath(); ctx.moveTo(bx, by);

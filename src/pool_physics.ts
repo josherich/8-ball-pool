@@ -447,6 +447,28 @@ export const syncPhysicsConfig = (balls: Ball[], cushionBodies: RAPIER.RigidBody
 export const clonePocketed = (p: Pocketed): Pocketed =>
   ({ solids: [...p.solids], stripes: [...p.stripes], eight: p.eight });
 
+/**
+ * Compute the number of sub-steps needed so no ball travels more than a
+ * fraction of its diameter in a single step.  This keeps collision normals
+ * accurate even for hard shots.
+ */
+export const computeSubSteps = (balls: Ball[], dt: number): number => {
+  const pixelRadius = 12;
+  const physRadius = pixelRadius / SCALE;
+  const maxDistPerStep = physRadius * 0.5; // at most 25% of diameter per sub-step
+
+  let maxSpeed = 0;
+  for (const ball of balls) {
+    const v = ball.body.linvel();
+    const speed = Math.sqrt(v.x * v.x + v.z * v.z);
+    if (speed > maxSpeed) maxSpeed = speed;
+  }
+
+  if (maxSpeed <= 0) return 1;
+  const needed = Math.ceil(maxSpeed * dt / maxDistPerStep);
+  return Math.min(needed, 16); // cap to avoid runaway subdivision
+};
+
 export const applyRollingFriction = (balls: Ball[], dt: number) => {
   const frictionCoeff = physicsConfig.ROLLING_FRICTION;
   const pixelRadius = 12;
