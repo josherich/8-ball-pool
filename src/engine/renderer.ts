@@ -1,4 +1,4 @@
-import { physicsConfig, SCALE, FIXED_DT, type Ball, type Pocket, type Pocketed, type PocketedEvent } from '../pool_physics';
+import { physicsConfig, SCALE, type Ball, type Pocket, type Pocketed, type PocketedEvent } from '../pool_physics';
 import { isValidBallPlacement } from '../pool_rules';
 import { renderBall3D, renderDisplayBall, BALL_COLORS } from './ball_renderer';
 import { TABLE_THEMES, type ThemeColors, type TableTheme } from '../settings';
@@ -32,9 +32,8 @@ function findTargetBall(
   cueBallX: number,
   cueBallY: number,
   aimAngle: number,
-  ballRadius: number,
-  power: number
-): { impactX: number; impactY: number; deflectDirX: number; deflectDirY: number; targetBallX: number; targetBallY: number } | null {
+  ballRadius: number
+): { impactX: number; impactY: number; targetBallX: number; targetBallY: number } | null {
   const dirX = Math.cos(aimAngle);
   const dirY = Math.sin(aimAngle);
 
@@ -68,40 +67,9 @@ function findTargetBall(
   }
 
   if (closestBall) {
-    // Geometric first-contact position (stable, power-independent)
-    const impactX = cueBallX + dirX * closestDist;
-    const impactY = cueBallY + dirY * closestDist;
-
-    // Target deflection direction: from the corrected cue-ball position
-    // toward the target center. The overshoot correction shifts where the
-    // cue ball actually is at the moment of collision, which changes the
-    // collision normal and thus the deflection direction.
-    let correctedX = impactX;
-    let correctedY = impactY;
-    if (power > 0) {
-      const v0 = power * 8 / physicsConfig.BALL_MASS * SCALE; // initial speed in px/s
-      const t = closestDist / v0; // approx travel time
-      const vImpact = v0 * Math.exp(-physicsConfig.LINEAR_DAMPING * t); // damped speed at impact
-      // Mirror computeSubSteps: maxDistPerStep = physRadius * 0.5 (in physics units)
-      const physRadius = ballRadius / SCALE;
-      const maxDistPerStep = physRadius * 0.5;
-      const vImpactPhys = vImpact / SCALE;
-      const subSteps = Math.min(Math.ceil(vImpactPhys * FIXED_DT / maxDistPerStep), 16);
-      const effectiveDt = FIXED_DT / subSteps;
-      const overshoot = vImpact * effectiveDt * 0.5; // half-step in px
-      correctedX += dirX * overshoot;
-      correctedY += dirY * overshoot;
-    }
-
-    const deflectDirX = closestBall.x - correctedX;
-    const deflectDirY = closestBall.y - correctedY;
-    const deflectLen = Math.sqrt(deflectDirX * deflectDirX + deflectDirY * deflectDirY);
-
     return {
-      impactX,
-      impactY,
-      deflectDirX: deflectLen > 0 ? deflectDirX / deflectLen : 0,
-      deflectDirY: deflectLen > 0 ? deflectDirY / deflectLen : 0,
+      impactX: cueBallX + dirX * closestDist,
+      impactY: cueBallY + dirY * closestDist,
       targetBallX: closestBall.x,
       targetBallY: closestBall.y
     };
@@ -351,7 +319,7 @@ export class PoolRenderer {
     ctx.restore();
 
     // Aiming line
-    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius, state.power);
+    const tbi = findTargetBall(state.balls, bx, by, state.aimAngle, radius);
     const op = state.aiming ? 0.3 + 0.3 * pr : 0.4;
     ctx.strokeStyle = `rgba(255, 255, 255, ${op})`; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
     ctx.beginPath(); ctx.moveTo(bx, by);
@@ -361,10 +329,12 @@ export class PoolRenderer {
       ctx.setLineDash([]); ctx.strokeStyle = `rgba(255, 255, 255, ${op + 0.2})`; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(tbi.impactX, tbi.impactY, radius, 0, Math.PI * 2); ctx.stroke();
 
-      if (Math.abs(tbi.deflectDirX) + Math.abs(tbi.deflectDirY) > 0.01) {
+      const tdx = tbi.targetBallX - tbi.impactX, tdy = tbi.targetBallY - tbi.impactY;
+      const tdl = Math.sqrt(tdx * tdx + tdy * tdy);
+      if (tdl > 0.1) {
         ctx.strokeStyle = `rgba(255, 200, 100, ${op + 0.1})`; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
         ctx.beginPath(); ctx.moveTo(tbi.targetBallX, tbi.targetBallY);
-        ctx.lineTo(tbi.targetBallX + tbi.deflectDirX * (this.aimLineLength * 0.5), tbi.targetBallY + tbi.deflectDirY * (this.aimLineLength * 0.5)); ctx.stroke();
+        ctx.lineTo(tbi.targetBallX + tdx / tdl * (this.aimLineLength * 0.5), tbi.targetBallY + tdy / tdl * (this.aimLineLength * 0.5)); ctx.stroke();
       }
       ctx.setLineDash([]);
     } else {
