@@ -212,7 +212,12 @@ class PoolGameEngine {
     if (this.lastHash !== peerHash) {
       console.warn('State hash mismatch!', this.lastHash, 'vs', peerHash);
       if (this.isHost && this.lastSnapshot) {
+        // Host is authoritative — send corrective snapshot to guest
         this.network.send({ type: 'state_sync', snapshot: this.lastSnapshot });
+      } else if (!this.isHost) {
+        // Guest detected mismatch from host's hash — send own hash back
+        // so the host can also detect the mismatch and send state_sync
+        this.network.send({ type: 'state_hash', hash: this.lastHash });
       }
     }
   }
@@ -475,6 +480,9 @@ class PoolGameEngine {
       };
       const hash = hashGameState(snapshot);
       this.lastHash = hash;
+
+      // Send hash to host so it can detect mismatches and send corrections
+      this.network.send({ type: 'state_hash', hash });
 
       if (this.pendingPeerHash) {
         this.handleStateHashComparison(this.pendingPeerHash);
