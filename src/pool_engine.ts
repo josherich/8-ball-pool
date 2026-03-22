@@ -108,6 +108,7 @@ class PoolGameEngine {
       startPowerShot: () => this.startPowerShot(),
       releasePowerShot: () => this.releasePowerShot(),
       cancelPowerShot: () => this.cancelPowerShot(),
+      onEscapePressed: () => this.callbacks.onEscapePressed?.(),
       placeBallInHand: () => this.placeBallInHand(),
       unlockAudio: () => this.audio.unlock(),
       onOpeningSoundCheck: () => {
@@ -457,6 +458,32 @@ class PoolGameEngine {
   }
 
   private onShotSettled() {
+    this.shotInProgress = false;
+
+    // In online mode, only the host is authoritative for turn logic.
+    // The guest defers to the host's "turn" message to avoid race conditions
+    // where the guest's local evaluateTurnSwitch overwrites the host's state.
+    if (this.mode === 'online' && !this.isHost) {
+      if (this.pocketedThisShot.cueBall) {
+        this.ballInHand = true;
+        this.audio.play('foulDing');
+      }
+
+      const snapshot: GameStateSnapshot = {
+        balls: serializeBalls(this.balls),
+        pocketed: clonePocketed(this.pocketed)
+      };
+      const hash = hashGameState(snapshot);
+      this.lastHash = hash;
+
+      if (this.pendingPeerHash) {
+        this.handleStateHashComparison(this.pendingPeerHash);
+        this.pendingPeerHash = null;
+      }
+
+      return;
+    }
+
     const result = evaluateTurnSwitch({
       currentPlayer: this.currentPlayer,
       mode: this.mode,
@@ -467,7 +494,6 @@ class PoolGameEngine {
     this.playerTypes = result.playerTypes;
     this.currentPlayer = result.currentPlayer;
     this.isMyTurn = result.isMyTurn;
-    this.shotInProgress = false;
 
     if (this.pocketedThisShot.cueBall) {
       this.ballInHand = true;
