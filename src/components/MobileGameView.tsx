@@ -2,6 +2,7 @@ import { type Ref, type RefObject, type ChangeEvent, type PointerEvent as ReactP
 import { Copy, Check } from 'lucide-react';
 import type PoolGameEngine from '../pool_engine';
 import GameOverOverlay from './GameOverOverlay';
+import PauseOverlay from './PauseOverlay';
 
 type MobileGameViewProps = {
   canvasRef: Ref<HTMLCanvasElement>;
@@ -24,6 +25,8 @@ type MobileGameViewProps = {
   gameRef: RefObject<PoolGameEngine | null>;
   onPlayAgain: () => void;
   onBackToMenu: () => void;
+  paused: boolean;
+  onResume: () => void;
 };
 
 const MobileGameView = ({
@@ -45,7 +48,9 @@ const MobileGameView = ({
   gameMode,
   gameRef,
   onPlayAgain,
-  onBackToMenu
+  onBackToMenu,
+  paused,
+  onResume
 }: MobileGameViewProps) => {
   return (
     <div style={{
@@ -152,6 +157,14 @@ const MobileGameView = ({
           />
           <div style={{ color: '#f9fafb', fontSize: '0.72rem', fontWeight: 600 }}>SHOOT</div>
         </div>
+
+        {paused && !gameOver && (
+          <PauseOverlay
+            onResume={onResume}
+            onExitGame={() => { onResume(); onBackToMenu(); }}
+            compact
+          />
+        )}
 
         {gameOver && (
           <GameOverOverlay

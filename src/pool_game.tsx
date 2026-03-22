@@ -10,6 +10,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import PoolGameEngine from './pool_engine';
 import GameMenu from './components/GameMenu';
 import GameOverOverlay from './components/GameOverOverlay';
+import PauseOverlay from './components/PauseOverlay';
 import MobileGameView from './components/MobileGameView';
 import SettingsPage from './components/SettingsPage';
 import { loadSettings, saveSettings, type GameSettings } from './settings';
@@ -37,6 +38,7 @@ const PoolGame = () => {
   const [shotPowerPercent, setShotPowerPercent] = useState(0);
   const [shotSliderActive, setShotSliderActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(loadSettings);
   const gameRef = useRef<PoolGameEngine | null>(null);
   const joinCodeRef = useRef<string | null>(null);
@@ -74,6 +76,18 @@ const PoolGame = () => {
 
     return () => { gameRef.current?.destroy(); };
   }, [gameMode, rapierLoaded, isMobileDevice]);
+
+  // ESC key toggles pause menu during gameplay
+  useEffect(() => {
+    if (!gameMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPaused(prev => !prev);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => { document.removeEventListener('keydown', handleKeyDown); };
+  }, [gameMode]);
 
   // Propagate settings changes to a running game
   useEffect(() => {
@@ -148,6 +162,7 @@ const PoolGame = () => {
     setRoomCode('');
     setShotPowerPercent(0);
     setShotSliderActive(false);
+    setPaused(false);
     joinCodeRef.current = null;
   };
 
@@ -269,6 +284,8 @@ const PoolGame = () => {
         gameRef={gameRef}
         onPlayAgain={handlePlayAgain}
         onBackToMenu={handleBackToMenu}
+        paused={paused}
+        onResume={() => setPaused(false)}
       />
     );
   }
@@ -348,6 +365,13 @@ const PoolGame = () => {
             display: 'block'
           }}
         />
+
+        {paused && !gameOver && (
+          <PauseOverlay
+            onResume={() => setPaused(false)}
+            onExitGame={() => { setPaused(false); handleBackToMenu(); }}
+          />
+        )}
 
         {gameOver && (
           <GameOverOverlay

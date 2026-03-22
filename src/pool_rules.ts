@@ -22,7 +22,7 @@ export const canShoot = ({
   return balls.every(ball => {
     const linvel = ball.body.linvel();
     const angvel = ball.body.angvel();
-    const linearSpeed = Math.sqrt(linvel.x * linvel.x + linvel.y * linvel.y + linvel.z * linvel.z);
+    const linearSpeed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
     const angularSpeed = Math.sqrt(angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
     return linearSpeed < 0.15 && angularSpeed < 0.3;
   });
