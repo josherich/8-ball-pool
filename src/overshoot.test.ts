@@ -79,8 +79,6 @@ function simulateAndGetTargetDeflection(
   cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
 
   const maxSteps = Math.round((1 / FIXED_DT) * 5); // 5 seconds max
-  let collisionDetected = false;
-
   for (let step = 0; step < maxSteps; step++) {
     const subSteps = computeSubSteps(balls, FIXED_DT);
     const subDt = FIXED_DT / subSteps;
@@ -93,7 +91,6 @@ function simulateAndGetTargetDeflection(
       const tv = targetBall.body.linvel();
       const targetSpeed = Math.sqrt(tv.x * tv.x + tv.z * tv.z);
       if (targetSpeed > 0.1) {
-        collisionDetected = true;
         return {
           deflectionAngle: Math.atan2(tv.z, tv.x),
           targetSpeed
@@ -244,8 +241,6 @@ describe('Overshoot Collision Accuracy', () => {
       // The cue ball must aim so its center arrives at a point
       // 2*ballRadius away from the target center, along the collision normal.
       const targetDist = Math.sqrt(cut.offsetX ** 2 + cut.offsetZ ** 2);
-      const targetAngle = Math.atan2(cut.offsetZ, cut.offsetX);
-
       // Theoretical deflection: target moves along center-to-center line
       const expectedDeflection = theoreticalDeflectionAngle(cut.offsetX, cut.offsetZ);
 
