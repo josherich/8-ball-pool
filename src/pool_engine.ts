@@ -46,6 +46,7 @@ class PoolGameEngine {
   aimAngle = 0;
   power = 0;
   powerIncreasing = false;
+  powerDirection = 1;
   gameStarted = false;
   pocketed: Pocketed = { solids: [], stripes: [], eight: false };
   playerTypes: { player1: string | null; player2: string | null } = { player1: null, player2: null };
@@ -270,6 +271,7 @@ class PoolGameEngine {
       this.aiming = true;
       this.power = 0;
       this.powerIncreasing = true;
+      this.powerDirection = 1;
     }
   }
 
@@ -421,7 +423,15 @@ class PoolGameEngine {
     }
 
     if (this.aiming && this.powerIncreasing) {
-      this.power = Math.min(this.power + 0.01 * physicsConfig.MAX_SHOT_POWER, physicsConfig.MAX_SHOT_POWER);
+      const step = 0.01 * physicsConfig.MAX_SHOT_POWER;
+      this.power += step * this.powerDirection;
+      if (this.power >= physicsConfig.MAX_SHOT_POWER) {
+        this.power = physicsConfig.MAX_SHOT_POWER;
+        this.powerDirection = -1;
+      } else if (this.power <= 0) {
+        this.power = 0;
+        this.powerDirection = 1;
+      }
     }
 
     this.renderer.render({

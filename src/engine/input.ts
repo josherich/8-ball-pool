@@ -83,6 +83,12 @@ export class InputHandler {
       e.preventDefault();
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.cb.cancelPowerShot();
+      }
+    };
+
     this.canvas.addEventListener('mousemove', handleMouseMove);
     this.canvas.addEventListener('mousedown', handleMouseDown);
     this.canvas.addEventListener('mouseup', handleMouseUp);
@@ -91,6 +97,7 @@ export class InputHandler {
     this.canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     this.canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
     this.canvas.addEventListener('touchcancel', handleTouchCancel, { passive: false });
+    document.addEventListener('keydown', handleKeyDown);
 
     this.cleanup = () => {
       this.canvas.removeEventListener('mousemove', handleMouseMove);
@@ -101,6 +108,7 @@ export class InputHandler {
       this.canvas.removeEventListener('touchmove', handleTouchMove);
       this.canvas.removeEventListener('touchend', handleTouchEnd);
       this.canvas.removeEventListener('touchcancel', handleTouchCancel);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }
 
