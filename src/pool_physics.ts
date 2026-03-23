@@ -477,7 +477,13 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
   const pixelRadius = 12;
   const R = pixelRadius / SCALE;
   const mass = physicsConfig.BALL_MASS;
-  const g = 9.81;
+  // Gravity must be scaled to the game's coordinate system.
+  // Ball radius is 2.4 physics units but 0.028575m in reality,
+  // so 1 physics unit = 0.028575/2.4 = 0.0119m.
+  // g = 9.81 m/s² / 0.0119 m/unit ≈ 824 units/s²
+  const REAL_BALL_RADIUS_M = 0.028575;
+  const metersPerUnit = REAL_BALL_RADIUS_M / R;
+  const g = 9.81 / metersPerUnit;
   const inertia = (2 / 5) * mass * R * R; // solid sphere moment of inertia
 
   const STOP_THRESHOLD = 0.05;
