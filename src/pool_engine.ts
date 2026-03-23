@@ -416,11 +416,11 @@ class PoolGameEngine {
       this.world.timestep = subDt;
 
       for (let s = 0; s < subSteps; s++) {
+        applyRollingFriction(this.balls, subDt);
         this.world.step(this.eventQueue || undefined);
         if (this.eventQueue) this.audio.processCollisionEvents(this.eventQueue, this.world, this.balls);
         this.checkPockets();
       }
-      applyRollingFriction(this.balls, FIXED_DT);
       this.accumulator -= FIXED_DT;
     }
 
