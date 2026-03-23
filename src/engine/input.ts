@@ -19,6 +19,7 @@ export type InputCallbacks = {
   startPowerShot: () => void;
   releasePowerShot: () => void;
   cancelPowerShot: () => void;
+  onEscapePressed: () => void;
   placeBallInHand: () => void;
   unlockAudio: () => void;
   onOpeningSoundCheck: () => void;
@@ -85,7 +86,11 @@ export class InputHandler {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        this.cb.cancelPowerShot();
+        if (this.cb.isAiming()) {
+          this.cb.cancelPowerShot();
+        } else {
+          this.cb.onEscapePressed();
+        }
       }
     };
 

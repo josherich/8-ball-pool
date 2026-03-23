@@ -108,6 +108,7 @@ class PoolGameEngine {
       startPowerShot: () => this.startPowerShot(),
       releasePowerShot: () => this.releasePowerShot(),
       cancelPowerShot: () => this.cancelPowerShot(),
+      onEscapePressed: () => this.callbacks.onEscapePressed?.(),
       placeBallInHand: () => this.placeBallInHand(),
       unlockAudio: () => this.audio.unlock(),
       onOpeningSoundCheck: () => {
@@ -211,7 +212,12 @@ class PoolGameEngine {
     if (this.lastHash !== peerHash) {
       console.warn('State hash mismatch!', this.lastHash, 'vs', peerHash);
       if (this.isHost && this.lastSnapshot) {
+        // Host is authoritative — send corrective snapshot to guest
         this.network.send({ type: 'state_sync', snapshot: this.lastSnapshot });
+      } else if (!this.isHost) {
+        // Guest detected mismatch from host's hash — send own hash back
+        // so the host can also detect the mismatch and send state_sync
+        this.network.send({ type: 'state_hash', hash: this.lastHash });
       }
     }
   }
@@ -457,6 +463,35 @@ class PoolGameEngine {
   }
 
   private onShotSettled() {
+    this.shotInProgress = false;
+
+    // In online mode, only the host is authoritative for turn logic.
+    // The guest defers to the host's "turn" message to avoid race conditions
+    // where the guest's local evaluateTurnSwitch overwrites the host's state.
+    if (this.mode === 'online' && !this.isHost) {
+      if (this.pocketedThisShot.cueBall) {
+        this.ballInHand = true;
+        this.audio.play('foulDing');
+      }
+
+      const snapshot: GameStateSnapshot = {
+        balls: serializeBalls(this.balls),
+        pocketed: clonePocketed(this.pocketed)
+      };
+      const hash = hashGameState(snapshot);
+      this.lastHash = hash;
+
+      // Send hash to host so it can detect mismatches and send corrections
+      this.network.send({ type: 'state_hash', hash });
+
+      if (this.pendingPeerHash) {
+        this.handleStateHashComparison(this.pendingPeerHash);
+        this.pendingPeerHash = null;
+      }
+
+      return;
+    }
+
     const result = evaluateTurnSwitch({
       currentPlayer: this.currentPlayer,
       mode: this.mode,
@@ -467,7 +502,6 @@ class PoolGameEngine {
     this.playerTypes = result.playerTypes;
     this.currentPlayer = result.currentPlayer;
     this.isMyTurn = result.isMyTurn;
-    this.shotInProgress = false;
 
     if (this.pocketedThisShot.cueBall) {
       this.ballInHand = true;

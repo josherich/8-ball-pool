@@ -38,6 +38,7 @@ const PoolGame = () => {
   const [shotSliderActive, setShotSliderActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(loadSettings);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
   const gameRef = useRef<PoolGameEngine | null>(null);
   const joinCodeRef = useRef<string | null>(null);
 
@@ -67,6 +68,7 @@ const PoolGame = () => {
       onRoomCodeGenerated: setRoomCode,
       joinCode: joinCodeRef.current,
       onGameOver: setGameOver,
+      onEscapePressed: () => setShowExitConfirm(true),
       mobileTouchControlsEnabled: isMobileDevice,
       initialSettings: settings,
     });
@@ -79,6 +81,16 @@ const PoolGame = () => {
   useEffect(() => {
     gameRef.current?.updateSettings(settings);
   }, [settings]);
+
+  // Allow ESC to dismiss the exit confirm modal
+  useEffect(() => {
+    if (!showExitConfirm) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowExitConfirm(false);
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [showExitConfirm]);
 
   const handleSettingsSave = (next: GameSettings) => {
     saveSettings(next);
@@ -148,6 +160,7 @@ const PoolGame = () => {
     setRoomCode('');
     setShotPowerPercent(0);
     setShotSliderActive(false);
+    setShowExitConfirm(false);
     joinCodeRef.current = null;
   };
 
@@ -357,6 +370,68 @@ const PoolGame = () => {
             onPlayAgain={handlePlayAgain}
             onBackToMenu={handleBackToMenu}
           />
+        )}
+
+        {showExitConfirm && !gameOver && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0, 0, 0, 0.75)',
+            borderRadius: '0.5rem'
+          }}>
+            <div style={{ textAlign: 'center', padding: '1rem' }}>
+              <h2 style={{
+                fontSize: '1.5rem',
+                fontWeight: 'bold',
+                color: 'hsl(45, 80%, 65%)',
+                marginBottom: '1rem'
+              }}>
+                Exit Game?
+              </h2>
+              <div style={{
+                display: 'flex',
+                gap: '0.6rem',
+                justifyContent: 'center'
+              }}>
+                <button
+                  onClick={() => setShowExitConfirm(false)}
+                  style={{
+                    padding: '0.75rem 1.4rem',
+                    borderRadius: '0.5rem',
+                    fontWeight: '600',
+                    fontSize: '1.05rem',
+                    background: 'hsl(25, 45%, 35%)',
+                    color: 'white',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { setShowExitConfirm(false); handleBackToMenu(); }}
+                  style={{
+                    padding: '0.75rem 1.4rem',
+                    borderRadius: '0.5rem',
+                    fontWeight: '600',
+                    fontSize: '1.05rem',
+                    background: 'hsl(0, 50%, 40%)',
+                    color: 'white',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Exit Game
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
