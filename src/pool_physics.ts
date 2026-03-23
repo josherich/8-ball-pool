@@ -488,10 +488,11 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
     const angvel = ball.body.angvel();
     const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
 
-    // Compute contact-point slip velocity: v_slip = v_linear + (omega × r_contact)
-    // r_contact = (0, -R, 0), so omega × r = (angvel.z * R, 0, -angvel.x * R)
-    const slipX = linvel.x + angvel.z * R;
-    const slipZ = linvel.z - angvel.x * R;
+    // Compute contact-point slip velocity.
+    // Game convention: rolling means ωz = +vx/R, ωx = -vz/R
+    // Slip is zero when in pure rolling: slipX = vx - ωz*R, slipZ = vz + ωx*R
+    const slipX = linvel.x - angvel.z * R;
+    const slipZ = linvel.z + angvel.x * R;
     const slipSpeed = Math.sqrt(slipX * slipX + slipZ * slipZ);
 
     if (speed < STOP_THRESHOLD && slipSpeed < SLIP_THRESHOLD) {
@@ -503,7 +504,7 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
       const frictionMag = slidingMu * mass * g;
 
       // Cap friction to prevent overshooting the slip in one timestep.
-      // Friction decelerates slip at rate F * (1/m + R²/I) = F * 7/(2m) for a solid sphere.
+      // Friction decelerates slip at rate F * 7/(2m) for a solid sphere.
       const maxFrictionForSlip = slipSpeed * 2 * mass / (7 * dt);
       const appliedFriction = Math.min(frictionMag, maxFrictionForSlip);
 
@@ -518,20 +519,37 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
       const dvx = (Fx / mass) * dt;
       const dvz = (Fz / mass) * dt;
 
-      // Torque from friction: tau = r_contact × F where r_contact = (0, -R, 0)
-      // (0,-R,0) × (Fx,0,Fz) = (-R*Fz, 0, R*Fx)
-      const domegaX = (-R * Fz / inertia) * dt;
-      const domegaZ = (R * Fx / inertia) * dt;
+      // Torque from friction, adapted to game convention (ωz = vx/R for rolling).
+      // Signs are flipped vs standard physics cross product so that friction
+      // drives angular velocity toward rolling rather than away from it.
+      const domegaX = (R * Fz / inertia) * dt;
+      const domegaZ = (-R * Fx / inertia) * dt;
+
+      // Sidespin (ωy) creates a lateral force via drilling friction at the
+      // contact patch. This doesn't arise from point-contact slip but is the
+      // primary mechanism for curving the cue ball with english.
+      let sideDvx = 0;
+      let sideDvz = 0;
+      if (speed > STOP_THRESHOLD && Math.abs(angvel.y) > 0.1) {
+        const sidespinForce = slidingMu * 0.3 * mass * g;
+        const sideImpulse = Math.min(sidespinForce * dt, Math.abs(angvel.y) * inertia * 0.1);
+        const sideSign = angvel.y > 0 ? 1 : -1;
+        // Force perpendicular to velocity (rotated 90° clockwise in XZ plane)
+        const dirX = linvel.x / speed;
+        const dirZ = linvel.z / speed;
+        sideDvx = (dirZ * sideImpulse * sideSign) / mass;
+        sideDvz = (-dirX * sideImpulse * sideSign) / mass;
+      }
 
       ball.body.setLinvel({
-        x: linvel.x + dvx,
+        x: linvel.x + dvx + sideDvx,
         y: 0,
-        z: linvel.z + dvz
+        z: linvel.z + dvz + sideDvz
       }, true);
 
       ball.body.setAngvel({
         x: angvel.x + domegaX,
-        y: angvel.y * 0.998, // gentle Y-spin (sidespin) damping from cloth
+        y: angvel.y * 0.998, // gentle sidespin damping from cloth drilling friction
         z: angvel.z + domegaZ
       }, true);
     } else {
@@ -547,7 +565,7 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
 
         ball.body.setLinvel({ x: newLinX, y: 0, z: newLinZ }, true);
 
-        // Keep angular velocity consistent with rolling
+        // Keep angular velocity consistent with rolling (game convention)
         ball.body.setAngvel({
           x: -newLinZ / R,
           y: angvel.y * 0.998,
