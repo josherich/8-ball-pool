@@ -309,7 +309,9 @@ export const setupTable = ({
     const length = Math.sqrt(dx * dx + dz * dz);
     if (length < 0.001) return;
 
-    const angle = Math.atan2(dz, dx); // rotation around Y axis
+    // RAPIER Y-rotation: local X → (cos(θ), 0, -sin(θ)) in world.
+    // To align local X with segment direction (dx, 0, dz), need sin(θ) = -dz/L.
+    const angle = Math.atan2(-dz, dx);
     const qw = Math.cos(angle / 2);
     const qy = Math.sin(angle / 2);
 
