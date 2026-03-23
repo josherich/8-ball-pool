@@ -11,10 +11,15 @@ import {
   computeSubSteps,
   syncPhysicsConfig,
   clonePocketed,
+  initCueBallSpin,
+  zeroCueBallSpin,
+  updateCueBallSpin,
+  applyCueBallCollisionSpin,
   type Ball,
   type Pocket,
   type Pocketed,
-  type PocketedThisShot
+  type PocketedThisShot,
+  type CueBallSpin
 } from './pool_physics';
 import { createDebugUI, setupTripleSlashToggle, type DebugUI } from './debug_ui';
 import { allBallsStopped, canShoot, evaluateTurnSwitch, evaluateGameOver, isValidBallPlacement } from './pool_rules';
@@ -68,6 +73,7 @@ class PoolGameEngine {
   cueSpinOffset = { x: 0, y: 0 };
   draggingCueSpin = false;
   cueControlExpanded = false;
+  cueBallSpin: CueBallSpin = zeroCueBallSpin();
   eventQueue: RAPIER.EventQueue | null = null;
   mobileTouchControlsEnabled: boolean;
   private audio: AudioManager;
@@ -370,11 +376,10 @@ class PoolGameEngine {
     const impulseZ = Math.sin(input.angle) * impulseStrength;
 
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
-    cueBall.body.applyTorqueImpulse({
-      x: -impulseZ * input.topspin,
-      y: impulseStrength * input.sidespin,
-      z: impulseX * input.topspin
-    }, true);
+
+    // Track spin separately from RAPIER angular velocity.
+    // Spin starts decoupled from rolling — that gap creates topspin/backspin effects.
+    this.cueBallSpin = initCueBallSpin(input.topspin, input.sidespin, input.power);
 
     this.gameStarted = true;
   }
@@ -417,10 +422,23 @@ class PoolGameEngine {
 
       for (let s = 0; s < subSteps; s++) {
         this.world.step(this.eventQueue || undefined);
-        if (this.eventQueue) this.audio.processCollisionEvents(this.eventQueue, this.world, this.balls);
+        if (this.eventQueue) {
+          const { cueBallHitObjectBall } = this.audio.processCollisionEvents(this.eventQueue, this.world, this.balls);
+          // Apply spin-dependent impulse after cue ball collision
+          if (cueBallHitObjectBall && this.cueBallSpin.isSliding) {
+            const cueBall = this.balls.find(b => b.type === 'cue');
+            if (cueBall) applyCueBallCollisionSpin(this.cueBallSpin, cueBall);
+          }
+        }
         this.checkPockets();
       }
       applyRollingFriction(this.balls, FIXED_DT);
+
+      // Update cue ball spin friction (converts spin to velocity changes)
+      const cueBall = this.balls.find(b => b.type === 'cue');
+      if (cueBall && this.cueBallSpin.isSliding) {
+        updateCueBallSpin(this.cueBallSpin, cueBall);
+      }
       this.accumulator -= FIXED_DT;
     }
 
@@ -464,6 +482,7 @@ class PoolGameEngine {
 
   private onShotSettled() {
     this.shotInProgress = false;
+    this.cueBallSpin = zeroCueBallSpin();
 
     // In online mode, only the host is authoritative for turn logic.
     // The guest defers to the host's "turn" message to avoid race conditions
