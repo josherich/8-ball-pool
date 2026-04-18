@@ -451,11 +451,18 @@ export const clonePocketed = (p: Pocketed): Pocketed =>
  * Compute the number of sub-steps needed so no ball travels more than a
  * fraction of its diameter in a single step.  This keeps collision normals
  * accurate even for hard shots.
+ *
+ * The ratio is deliberately small: when the cue ball travels a large
+ * fraction of its radius per step, it overshoots the theoretical first-
+ * contact point before the collision is resolved, which tilts the
+ * collision normal and makes cut shots land thinner than the aim line
+ * predicts.  Capping travel at 5% of the radius per sub-step keeps the
+ * overshoot well under a pixel.
  */
 export const computeSubSteps = (balls: Ball[], dt: number): number => {
   const pixelRadius = 12;
   const physRadius = pixelRadius / SCALE;
-  const maxDistPerStep = physRadius * 0.5; // at most 25% of diameter per sub-step
+  const maxDistPerStep = physRadius * 0.05; // at most 2.5% of diameter per sub-step
 
   let maxSpeed = 0;
   for (const ball of balls) {
@@ -466,7 +473,7 @@ export const computeSubSteps = (balls: Ball[], dt: number): number => {
 
   if (maxSpeed <= 0) return 1;
   const needed = Math.ceil(maxSpeed * dt / maxDistPerStep);
-  return Math.min(needed, 16); // cap to avoid runaway subdivision
+  return Math.min(needed, 32); // cap to avoid runaway subdivision
 };
 
 export const applyRollingFriction = (balls: Ball[], dt: number) => {

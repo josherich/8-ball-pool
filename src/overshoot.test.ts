@@ -145,8 +145,8 @@ describe('computeSubSteps', () => {
     // Set a slow velocity: 1 physics unit/s
     ball.body.setLinvel({ x: 1, y: 0, z: 0 }, true);
     // distance per step = 1 * (1/240) ≈ 0.00417
-    // maxDistPerStep = 2.4 * 0.5 = 1.2
-    // needed = ceil(0.00417 / 1.2) = 1
+    // maxDistPerStep = 2.4 * 0.05 = 0.12
+    // needed = ceil(0.00417 / 0.12) = 1
     expect(computeSubSteps([ball], FIXED_DT)).toBe(1);
     world.free();
   });
@@ -158,18 +158,18 @@ describe('computeSubSteps', () => {
     ball.body.setLinvel({ x: 423, y: 0, z: 0 }, true);
     const steps = computeSubSteps([ball], FIXED_DT);
     // distance per step = 423 / 240 ≈ 1.76
-    // maxDistPerStep = 1.2
-    // needed = ceil(1.76 / 1.2) = 2
-    expect(steps).toBe(2);
+    // maxDistPerStep = 0.12
+    // needed = ceil(1.76 / 0.12) = 15
+    expect(steps).toBe(15);
     world.free();
   });
 
-  it('should cap at 16 sub-steps for extreme speeds', () => {
+  it('should cap at 32 sub-steps for extreme speeds', () => {
     const world = createWorld(RAPIER);
     const ball = createBall(world, 60, 70, 'cue', 0);
     // Absurdly high speed
     ball.body.setLinvel({ x: 50000, y: 0, z: 0 }, true);
-    expect(computeSubSteps([ball], FIXED_DT)).toBe(16);
+    expect(computeSubSteps([ball], FIXED_DT)).toBe(32);
     world.free();
   });
 
@@ -274,7 +274,7 @@ describe('Overshoot Collision Accuracy', () => {
 
           // With adaptive sub-stepping, error should be small at all powers.
           // Before the fix, high power shots could have ~9° error.
-          expect(errorDegrees).toBeLessThan(5);
+          expect(errorDegrees).toBeLessThan(2);
         });
       }
 
